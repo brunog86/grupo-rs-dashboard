@@ -2677,20 +2677,21 @@ async function syncVendasParaSupabase(rows) {
     if (!lojaId) { erros.push(`Não foi possível identificar/criar a loja "${nomeLoja}".`); continue; }
     const rowsDaLoja = rows.filter(r => r.loja === nomeLoja);
 
-    // Remove vendas anteriores dessa loja no intervalo de datas (min/max evita query gigante)
-    const datas = rowsDaLoja.map(r => r.data).sort();
-    const { error: delErr } = await sb.from('vendas').delete()
-      .eq('loja_id', lojaId).gte('data', datas[0]).lte('data', datas[datas.length - 1]);
-    if (delErr) erros.push(`Erro ao limpar vendas antigas de "${nomeLoja}": ${delErr.message}`);
+    // Remove vendas anteriores dessa loja, dia por dia (evita timeout em range grande)
+    const datasUnicas = [...new Set(rowsDaLoja.map(r => r.data))];
+    for (const dia of datasUnicas) {
+      const { error: delErr } = await sb.from('vendas').delete().eq('loja_id', lojaId).eq('data', dia);
+      if (delErr) erros.push(`Erro ao limpar vendas de "${nomeLoja}" em ${dia}: ${delErr.message}`);
+    }
 
-    // Insere em lotes de 400
+    // Insere em lotes de 200 (lotes menores reduzem chance de timeout)
     const payload = rowsDaLoja.map(r => ({
       loja_id: lojaId, data: r.data, hora: r.hora || null, vendedor: r.vendedor || null,
       caixa: r.caixa || null, valor: r.valor, tipo: r.tipo || null
     }));
     let inseridos = 0;
-    for (let i = 0; i < payload.length; i += 400) {
-      const lote = payload.slice(i, i + 400);
+    for (let i = 0; i < payload.length; i += 200) {
+      const lote = payload.slice(i, i + 200);
       const { error, data } = await sb.from('vendas').insert(lote).select('id');
       if (error) { erros.push(`Erro ao gravar vendas de "${nomeLoja}" (lote ${i}): ${error.message}`); }
       else inseridos += (data?.length || lote.length);
