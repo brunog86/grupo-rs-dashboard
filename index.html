@@ -1180,8 +1180,8 @@ async function iniciarAposLogin() {
 
   await carregarTodasLojas();
 
-  // A partir daqui, segue o fluxo normal do dashboard (IndexedDB local + render)
-  const temDados = await carregarLocal();
+  // ── Carrega os dados do Supabase (fonte de verdade compartilhada) ─────────
+  const temDados = await carregarTudoDoSupabase();
   if (temDados) {
     if (finPagarData.length)   { document.getElementById('finPagarStatus').textContent = `✓ ${finPagarData.length} lançamentos`; document.getElementById('finPagarStatus').style.color = 'var(--red)'; }
     if (finReceberData.length) { document.getElementById('finReceberStatus').textContent = `✓ ${finReceberData.length} lançamentos`; document.getElementById('finReceberStatus').style.color = 'var(--green)'; }
@@ -1195,9 +1195,12 @@ async function iniciarAposLogin() {
       if (sel) sel.innerHTML = '<option value="">Todas as lojas</option>' + lojas.map(l => `<option value="${l}">${l}</option>`).join('');
       populateProdMesSelectors(false);
     }
-    const savedAt = await dbGet('savedAt');
-    showToast(`Dados restaurados — última atualização: ${formatSavedAt(savedAt)}`, 'success');
+    showToast('Dados carregados do servidor.', 'success');
+    salvarLocal(); // mantém cópia local como cache, útil se ficar offline momentaneamente
     initDashboard();
+  } else {
+    // Sem dados no servidor ainda — mostra a tela de upload normalmente
+    document.getElementById('uploadZone').style.display = 'block';
   }
 
   if (isAdmin()) carregarListaUsuarios();
@@ -2494,11 +2497,12 @@ function syncHeaderLoja() {
 }
 
 function loadFinFile(files, tipo) {
+  if (!podeEscrever()) { showToast('Seu perfil não tem permissão para carregar arquivos.', 'error'); return; }
   const lojaName = document.getElementById('finLojaNameInput').value.trim();
   let pending = files.length, newRows = [];
   Array.from(files).forEach(file => {
     const reader = new FileReader();
-    reader.onload = e => {
+    reader.onload = async e => {
       const rows = parseFinanceiro(e.target.result, lojaName, tipo);
       if (rows) newRows = newRows.concat(rows);
       pending--;
@@ -2523,6 +2527,8 @@ function loadFinFile(files, tipo) {
         }
         // Populate mes filter
         populateFinMesFilter();
+        showToast('Enviando para o servidor...', '');
+        await syncFinanceiroParaSupabase(newRows, tipo);
         showToast(`${newRows.length} lançamentos carregados — ${lojasNovas.join(', ')} atualizada`, 'success');
         salvarLocal();
         renderFinanceiro();
@@ -2541,7 +2547,7 @@ function loadFiles(files) {
   Array.from(files).forEach(file => {
     const isExcel = /\.xlsx?$/i.test(file.name);
     const reader = new FileReader();
-    reader.onload = e => {
+    reader.onload = async e => {
       let rows;
       if (isExcel) rows = parseXLS(e.target.result, lojaName);
       else rows = parseCSV(e.target.result);
@@ -2556,6 +2562,8 @@ function loadFiles(files) {
         allData = allData.concat(newRows);
         allData.sort((a,b) => a.data.localeCompare(b.data));
         const temPgto = pgtoData.some(r => lojasNovas.includes(r.loja));
+        showToast('Enviando para o servidor...', '');
+        await syncVendasParaSupabase(newRows);
         showToast(`${newRows.length} registros carregados — ${lojasNovas.join(', ')}${temPgto ? ' (formas de pagamento incluídas)' : ''}`, 'success');
         salvarLocal();
         initDashboard();
@@ -2618,6 +2626,243 @@ function dbDel(chave) {
     req.onsuccess = () => resolve();
     req.onerror   = e => reject(e.target.error);
   }));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SINCRONIZAÇÃO COM SUPABASE — fonte de verdade compartilhada entre usuários
+// ════════════════════════════════════════════════════════════════════════════
+const lojaIdCache = {}; // nome → uuid, evita consultas repetidas
+
+async function getOrCreateLojaId(nomeLoja) {
+  if (!nomeLoja) nomeLoja = 'Loja não identificada';
+  if (lojaIdCache[nomeLoja]) return lojaIdCache[nomeLoja];
+
+  // Procura na lista já carregada
+  let loja = todasLojasCadastro.find(l => l.nome === nomeLoja);
+  if (loja) { lojaIdCache[nomeLoja] = loja.id; return loja.id; }
+
+  // Não existe — cria (apenas admin/gerente têm permissão via RLS)
+  const { data, error } = await sb.from('lojas').insert({ nome: nomeLoja }).select('id, nome, cor').single();
+  if (error) {
+    console.error('Erro ao criar loja:', error);
+    // Pode já existir (corrida) — tenta buscar de novo
+    const { data: existente } = await sb.from('lojas').select('id, nome, cor').eq('nome', nomeLoja).maybeSingle();
+    if (existente) { todasLojasCadastro.push(existente); lojaIdCache[nomeLoja] = existente.id; return existente.id; }
+    return null;
+  }
+  todasLojasCadastro.push(data);
+  lojaIdCache[nomeLoja] = data.id;
+  return data.id;
+}
+
+// ── Envia vendas para o Supabase (substitui o período daquela loja) ────────
+async function syncVendasParaSupabase(rows) {
+  if (!rows.length) return;
+  const lojasNovas = [...new Set(rows.map(r => r.loja))];
+
+  for (const nomeLoja of lojasNovas) {
+    const lojaId = await getOrCreateLojaId(nomeLoja);
+    if (!lojaId) continue;
+    const rowsDaLoja = rows.filter(r => r.loja === nomeLoja);
+
+    // Remove vendas anteriores dessa loja nas datas que estão sendo recarregadas
+    const datasAfetadas = [...new Set(rowsDaLoja.map(r => r.data))];
+    await sb.from('vendas').delete().eq('loja_id', lojaId).in('data', datasAfetadas);
+
+    // Insere em lotes de 500 (limite de payload do Supabase)
+    const payload = rowsDaLoja.map(r => ({
+      loja_id: lojaId, data: r.data, hora: r.hora || null, vendedor: r.vendedor || null,
+      caixa: r.caixa || null, valor: r.valor, tipo: r.tipo || null
+    }));
+    for (let i = 0; i < payload.length; i += 500) {
+      const lote = payload.slice(i, i + 500);
+      const { error } = await sb.from('vendas').insert(lote);
+      if (error) console.error('Erro ao sincronizar vendas:', error);
+    }
+  }
+
+  try {
+    await sb.from('uploads_log').insert({
+      tipo_arquivo: 'vendas', registros: rows.length, usuario: currentPerfil?.nome || 'desconhecido'
+    });
+  } catch(e) {}
+}
+
+// ── Envia produtos vendidos para o Supabase ─────────────────────────────────
+async function syncProdutosParaSupabase(rows) {
+  if (!rows.length) return;
+  const lojasNovas = [...new Set(rows.map(r => r.loja))];
+
+  for (const nomeLoja of lojasNovas) {
+    const lojaId = await getOrCreateLojaId(nomeLoja);
+    if (!lojaId) continue;
+    const rowsDaLoja = rows.filter(r => r.loja === nomeLoja);
+    const datasAfetadas = [...new Set(rowsDaLoja.map(r => r.data))].filter(Boolean);
+
+    if (datasAfetadas.length) {
+      await sb.from('produtos_vendidos').delete().eq('loja_id', lojaId).in('data', datasAfetadas);
+    } else {
+      await sb.from('produtos_vendidos').delete().eq('loja_id', lojaId);
+    }
+
+    const payload = rowsDaLoja.map(r => ({
+      loja_id: lojaId, data: r.data || null, produto: r.produto, barras: r.barras || null,
+      marca: r.marca || null, quantidade: r.quantidade || 1, valor: r.valor
+    }));
+    for (let i = 0; i < payload.length; i += 500) {
+      const lote = payload.slice(i, i + 500);
+      const { error } = await sb.from('produtos_vendidos').insert(lote);
+      if (error) console.error('Erro ao sincronizar produtos:', error);
+    }
+  }
+
+  try {
+    await sb.from('uploads_log').insert({
+      tipo_arquivo: 'produtos', registros: rows.length, usuario: currentPerfil?.nome || 'desconhecido'
+    });
+  } catch(e) {}
+}
+
+// ── Envia contas a pagar/receber para o Supabase ────────────────────────────
+async function syncFinanceiroParaSupabase(rows, tipo) {
+  if (!rows.length) return;
+  const lojasNovas = [...new Set(rows.map(r => r.loja))];
+
+  for (const nomeLoja of lojasNovas) {
+    const lojaId = await getOrCreateLojaId(nomeLoja);
+    if (!lojaId) continue;
+    const rowsDaLoja = rows.filter(r => r.loja === nomeLoja);
+
+    // Substitui todo o financeiro daquele tipo para a loja (é um snapshot do relatório)
+    await sb.from('financeiro').delete().eq('loja_id', lojaId).eq('tipo', tipo);
+
+    const payload = rowsDaLoja.map(r => ({
+      loja_id: lojaId, tipo, emissao: r.emissao || null, situacao: r.situacao || null,
+      categoria: r.categoria || null, dt_vencimento: r.dtVenc || null, dt_quitacao: r.dtQuit || null,
+      valor_doc: r.valorDoc, valor_quit: r.valorQuit || 0, historico: r.historico || null,
+      fornecedor: r.fornecedor || null
+    }));
+    for (let i = 0; i < payload.length; i += 500) {
+      const lote = payload.slice(i, i + 500);
+      const { error } = await sb.from('financeiro').insert(lote);
+      if (error) console.error('Erro ao sincronizar financeiro:', error);
+    }
+  }
+
+  try {
+    await sb.from('uploads_log').insert({
+      tipo_arquivo: 'financeiro_' + tipo, registros: rows.length, usuario: currentPerfil?.nome || 'desconhecido'
+    });
+  } catch(e) {}
+}
+
+// ── Envia formas de pagamento para o Supabase ───────────────────────────────
+async function syncPagamentosParaSupabase(rows) {
+  if (!rows.length) return;
+  const lojasNovas = [...new Set(rows.map(r => r.loja))];
+
+  for (const nomeLoja of lojasNovas) {
+    const lojaId = await getOrCreateLojaId(nomeLoja);
+    if (!lojaId) continue;
+    const rowsDaLoja = rows.filter(r => r.loja === nomeLoja);
+    const datasAfetadas = [...new Set(rowsDaLoja.map(r => r.data))].filter(Boolean);
+
+    if (datasAfetadas.length) {
+      await sb.from('pagamentos').delete().eq('loja_id', lojaId).in('data', datasAfetadas);
+    }
+
+    const payload = rowsDaLoja.map(r => ({
+      loja_id: lojaId, data: r.data, hora: r.hora || null, nro_venda: r.nro || null,
+      tipo: r.tipo || null, vendedor: r.vendedor || null, caixa: r.caixa || null,
+      valor: r.valor, forma: r.forma || null
+    }));
+    for (let i = 0; i < payload.length; i += 500) {
+      const lote = payload.slice(i, i + 500);
+      const { error } = await sb.from('pagamentos').insert(lote);
+      if (error) console.error('Erro ao sincronizar pagamentos:', error);
+    }
+  }
+}
+
+// ── Envia catálogo marca×código de barras ───────────────────────────────────
+async function syncCatalogoParaSupabase(catalogo) {
+  const entries = Object.entries(catalogo);
+  if (!entries.length) return;
+  const payload = entries.map(([barras, marca]) => ({ barras, marca }));
+  for (let i = 0; i < payload.length; i += 500) {
+    const lote = payload.slice(i, i + 500);
+    const { error } = await sb.from('catalogo_marcas').upsert(lote, { onConflict: 'barras' });
+    if (error) console.error('Erro ao sincronizar catálogo:', error);
+  }
+}
+
+// ── Carrega TUDO do Supabase (respeitando RLS/permissão automaticamente) ───
+async function carregarTudoDoSupabase() {
+  showToast('Carregando dados do servidor...', '');
+
+  const lojaMap = {}; // id → nome, para reconstruir os campos "loja" nos objetos locais
+  todasLojasCadastro.forEach(l => lojaMap[l.id] = l.nome);
+
+  // Busca em paralelo, paginando com range para evitar limite de 1000 linhas do Supabase
+  async function buscarTudo(tabela, colunas) {
+    let todos = [];
+    let from = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await sb.from(tabela).select(colunas).range(from, from + pageSize - 1);
+      if (error) { console.error(`Erro ao buscar ${tabela}:`, error); break; }
+      if (!data || !data.length) break;
+      todos = todos.concat(data);
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    return todos;
+  }
+
+  const [vendasRows, prodRows, finRows, pgtoRows, catalogoRows] = await Promise.all([
+    buscarTudo('vendas', '*'),
+    buscarTudo('produtos_vendidos', '*'),
+    buscarTudo('financeiro', '*'),
+    buscarTudo('pagamentos', '*'),
+    buscarTudo('catalogo_marcas', '*'),
+  ]);
+
+  allData = vendasRows.map(r => ({
+    data: r.data, hora: r.hora, loja: lojaMap[r.loja_id] || '—',
+    vendedor: r.vendedor, caixa: r.caixa, valor: parseFloat(r.valor), tipo: r.tipo
+  }));
+
+  prodData = prodRows.map(r => ({
+    loja: lojaMap[r.loja_id] || '—', data: r.data, produto: r.produto,
+    barras: r.barras, marca: r.marca, quantidade: parseFloat(r.quantidade || 1), valor: parseFloat(r.valor)
+  }));
+
+  finPagarData = finRows.filter(r => r.tipo === 'pagar').map(r => ({
+    loja: lojaMap[r.loja_id] || '—', tipo: 'pagar', emissao: r.emissao, situacao: r.situacao,
+    categoria: r.categoria, dtVenc: r.dt_vencimento, dtQuit: r.dt_quitacao,
+    valorDoc: parseFloat(r.valor_doc), valorQuit: parseFloat(r.valor_quit || 0),
+    historico: r.historico, fornecedor: r.fornecedor,
+    mesAno: (r.dt_vencimento || r.emissao || '').substring(0,7)
+  }));
+
+  finReceberData = finRows.filter(r => r.tipo === 'receber').map(r => ({
+    loja: lojaMap[r.loja_id] || '—', tipo: 'receber', emissao: r.emissao, situacao: r.situacao,
+    categoria: r.categoria, dtVenc: r.dt_vencimento, dtQuit: r.dt_quitacao,
+    valorDoc: parseFloat(r.valor_doc), valorQuit: parseFloat(r.valor_quit || 0),
+    historico: r.historico, fornecedor: r.fornecedor,
+    mesAno: (r.dt_vencimento || r.emissao || '').substring(0,7)
+  }));
+
+  pgtoData = pgtoRows.map(r => ({
+    loja: lojaMap[r.loja_id] || '—', data: r.data, hora: r.hora, nro: r.nro_venda,
+    tipo: r.tipo, vendedor: r.vendedor, caixa: r.caixa, valor: parseFloat(r.valor), forma: r.forma
+  }));
+
+  catalogoMarcas = {};
+  catalogoRows.forEach(r => { catalogoMarcas[r.barras] = r.marca; });
+
+  return allData.length > 0 || prodData.length > 0 || finPagarData.length > 0 ||
+         finReceberData.length > 0 || pgtoData.length > 0;
 }
 
 async function salvarLocal() {
@@ -4832,14 +5077,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Catálogo e produtos ───────────────────────────────────
   document.getElementById('catalogoInput').addEventListener('change', e => {
+    if (!podeEscrever()) { showToast('Seu perfil não tem permissão para carregar arquivos.', 'error'); return; }
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = async ev => {
       const count = parseCatalogo(ev.target.result);
       if (count > 0) {
         document.getElementById('catalogoStatus').textContent = `✓ ${count} produtos mapeados`;
         document.getElementById('catalogoStatus').style.color = 'var(--green)';
+        showToast('Enviando para o servidor...', '');
+        await syncCatalogoParaSupabase(catalogoMarcas);
         salvarLocal();
         showToast(`Catálogo carregado — ${count} códigos mapeados`, 'success');
       } else {
@@ -4851,13 +5099,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.getElementById('prodFileInput').addEventListener('change', e => {
+    if (!podeEscrever()) { showToast('Seu perfil não tem permissão para carregar arquivos.', 'error'); return; }
     const files = e.target.files;
     if (!files.length) return;
     const lojaName = document.getElementById('prodLojaNameInput').value.trim();
     let pending = files.length, newRows = [];
     Array.from(files).forEach(file => {
       const reader = new FileReader();
-      reader.onload = ev => {
+      reader.onload = async ev => {
         const rows = parseProdutos(ev.target.result, lojaName);
         if (rows) newRows = newRows.concat(rows);
         pending--;
@@ -4871,9 +5120,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sel = document.getElementById('prodLojaFilter');
           sel.innerHTML = '<option value="">Todas as lojas</option>' + lojas.map(l => `<option value="${l}">${l}</option>`).join('');
           populateProdMesSelectors(true);
-          const semId = newRows.filter(r => r.marca === 'SEM IDENTIF').length;
           document.getElementById('prodFileStatus').textContent = `✓ ${prodData.length} itens carregados`;
           document.getElementById('prodFileStatus').style.color = 'var(--green)';
+          showToast('Enviando para o servidor...', '');
+          await syncProdutosParaSupabase(newRows);
           showToast(`${newRows.length} itens carregados — ${lojasNovas.join(', ')} atualizada`, 'success');
           salvarLocal();
           renderProdutos();
@@ -4886,13 +5136,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Financeiro ────────────────────────────────────────────
   document.getElementById('pgtoFileInput').addEventListener('change', e => {
+    if (!podeEscrever()) { showToast('Seu perfil não tem permissão para carregar arquivos.', 'error'); return; }
     const files = e.target.files;
     if (!files.length) return;
     const lojaName = document.getElementById('headerLojaInput').value.trim();
     let pending = files.length, newRows = [];
     Array.from(files).forEach(file => {
       const reader = new FileReader();
-      reader.onload = ev => {
+      reader.onload = async ev => {
         const rows = parseVendasDetalhe(ev.target.result, lojaName);
         if (rows) newRows = newRows.concat(rows);
         pending--;
@@ -4906,6 +5157,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           document.getElementById('pgtoLojaFilter').innerHTML = '<option value="">Todas as lojas</option>' + lojas.map(l => `<option value="${l}">${l}</option>`).join('');
           document.getElementById('pgtoStatus').textContent = `✓ ${pgtoData.length} vendas carregadas`;
           document.getElementById('pgtoStatus').style.color = 'var(--blue)';
+          showToast('Enviando para o servidor...', '');
+          await syncPagamentosParaSupabase(newRows);
           salvarLocal();
           showToast(`${newRows.length} vendas carregadas — ${lojasNovas.join(', ')}`, 'success');
           renderPagamentos();
