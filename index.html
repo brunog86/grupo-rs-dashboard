@@ -2838,14 +2838,15 @@ async function carregarTudoDoSupabase() {
   todasLojasCadastro.forEach(l => lojaMap[l.id] = l.nome);
 
   // Busca em paralelo, paginando com range para evitar limite de 1000 linhas do Supabase
-  // IMPORTANTE: usa order('id') para garantir ordem estável entre páginas —
+  // IMPORTANTE: usa order() para garantir ordem estável entre páginas —
   // sem isso, o Postgres pode repetir ou pular linhas entre chamadas de range().
-  async function buscarTudo(tabela, colunas) {
+  // orderCol é configurável pois catalogo_marcas usa 'barras' como chave (não tem 'id').
+  async function buscarTudo(tabela, colunas, orderCol = 'id') {
     let todos = [];
     let from = 0;
     const pageSize = 1000;
     while (true) {
-      const { data, error } = await sb.from(tabela).select(colunas).order('id').range(from, from + pageSize - 1);
+      const { data, error } = await sb.from(tabela).select(colunas).order(orderCol).range(from, from + pageSize - 1);
       if (error) { console.error(`Erro ao buscar ${tabela}:`, error); break; }
       if (!data || !data.length) break;
       todos = todos.concat(data);
@@ -2860,7 +2861,7 @@ async function carregarTudoDoSupabase() {
     buscarTudo('produtos_vendidos', '*'),
     buscarTudo('financeiro', '*'),
     buscarTudo('pagamentos', '*'),
-    buscarTudo('catalogo_marcas', '*'),
+    buscarTudo('catalogo_marcas', '*', 'barras'),
   ]);
 
   // Validação: confirma com o banco quantas linhas DEVERIAM existir (head count)
