@@ -2451,7 +2451,7 @@ function parseXLS(arrayBuffer, lojaName) {
         const col3 = String(row[3] || '').trim();
 
         if (!/^\d+$/.test(col0)) continue;
-        if (!/^\d{2}\/\d{2}\/\d{4}$/.test(col1)) continue;
+        if (!/^\d{2}\/\d{2}\/\d{4}/.test(col1)) continue;
 
         const [dd, mm, yyyy] = col1.split('/');
         const rawVal = String(row[18] || '').replace(/[R$\s]/g, '').replace(',', '.');
@@ -2562,8 +2562,12 @@ function loadFiles(files) {
         allData = allData.concat(newRows);
         allData.sort((a,b) => a.data.localeCompare(b.data));
         const temPgto = pgtoData.some(r => lojasNovas.includes(r.loja));
+        if (newRows.length > 5000) {
+          showToast(`Arquivo grande (${fmtNum(newRows.length)} registros) — isso pode levar alguns minutos. Não feche a aba.`, '');
+          await new Promise(r => setTimeout(r, 1500));
+        }
         showToast('Enviando para o servidor...', '');
-        const syncResult = await syncVendasParaSupabase(newRows);
+        const syncResult = await syncVendasParaSupabase(newRows, msg => showToast(msg, ''));
         if (!syncResult.ok) {
           console.error('Erros de sincronização:', syncResult.erros);
           showToast(`Atenção: ${syncResult.erros[0]} (veja o console para detalhes)`, 'error');
@@ -2667,7 +2671,7 @@ async function getOrCreateLojaId(nomeLoja) {
 }
 
 // ── Envia vendas para o Supabase (substitui o período daquela loja) ────────
-async function syncVendasParaSupabase(rows) {
+async function syncVendasParaSupabase(rows, onProgress) {
   if (!rows.length) return { ok: true, erros: [] };
   const lojasNovas = [...new Set(rows.map(r => r.loja))];
   const erros = [];
@@ -2677,27 +2681,35 @@ async function syncVendasParaSupabase(rows) {
     if (!lojaId) { erros.push(`Não foi possível identificar/criar a loja "${nomeLoja}".`); continue; }
     const rowsDaLoja = rows.filter(r => r.loja === nomeLoja);
 
-    // Remove vendas anteriores dessa loja, dia por dia (evita timeout em range grande)
-    const datasUnicas = [...new Set(rowsDaLoja.map(r => r.data))];
-    for (const dia of datasUnicas) {
-      const { error: delErr } = await sb.from('vendas').delete().eq('loja_id', lojaId).eq('data', dia);
-      if (delErr) erros.push(`Erro ao limpar vendas de "${nomeLoja}" em ${dia}: ${delErr.message}`);
-    }
+    // Remove TODAS as vendas anteriores dessa loja de uma vez (substituição completa).
+    // Mais rápido e confiável que apagar dia a dia quando o arquivo é grande (histórico).
+    if (onProgress) onProgress(`Limpando dados antigos de "${nomeLoja}"...`);
+    const { error: delErr } = await sb.from('vendas').delete().eq('loja_id', lojaId);
+    if (delErr) erros.push(`Erro ao limpar vendas antigas de "${nomeLoja}": ${delErr.message}`);
 
-    // Insere em lotes de 200 (lotes menores reduzem chance de timeout)
+    // Insere em lotes de 1000 (registros pequenos, cabe tranquilo no limite do Supabase)
     const payload = rowsDaLoja.map(r => ({
       loja_id: lojaId, data: r.data, hora: r.hora || null, vendedor: r.vendedor || null,
       caixa: r.caixa || null, valor: r.valor, tipo: r.tipo || null
     }));
     let inseridos = 0;
-    for (let i = 0; i < payload.length; i += 200) {
-      const lote = payload.slice(i, i + 200);
+    const totalLotes = Math.ceil(payload.length / 1000);
+    for (let i = 0; i < payload.length; i += 1000) {
+      const lote = payload.slice(i, i + 1000);
+      const loteAtual = Math.floor(i / 1000) + 1;
+      if (onProgress) onProgress(`Enviando "${nomeLoja}" — lote ${loteAtual}/${totalLotes} (${inseridos}/${payload.length} registros)`);
       const { error, data } = await sb.from('vendas').insert(lote).select('id');
-      if (error) { erros.push(`Erro ao gravar vendas de "${nomeLoja}" (lote ${i}): ${error.message}`); }
+      if (error) { erros.push(`Erro ao gravar vendas de "${nomeLoja}" (lote ${loteAtual}): ${error.message}`); }
       else inseridos += (data?.length || lote.length);
     }
     if (inseridos < rowsDaLoja.length) {
       erros.push(`"${nomeLoja}": apenas ${inseridos} de ${rowsDaLoja.length} vendas foram salvas no servidor.`);
+    }
+
+    // Confirma com o banco quantas linhas realmente existem para essa loja agora
+    const { count: countFinal } = await sb.from('vendas').select('id', { count: 'exact', head: true }).eq('loja_id', lojaId);
+    if (typeof countFinal === 'number' && countFinal !== rowsDaLoja.length) {
+      erros.push(`"${nomeLoja}": esperado ${rowsDaLoja.length} vendas no servidor, mas há ${countFinal} registradas.`);
     }
   }
 
@@ -2826,12 +2838,14 @@ async function carregarTudoDoSupabase() {
   todasLojasCadastro.forEach(l => lojaMap[l.id] = l.nome);
 
   // Busca em paralelo, paginando com range para evitar limite de 1000 linhas do Supabase
+  // IMPORTANTE: usa order('id') para garantir ordem estável entre páginas —
+  // sem isso, o Postgres pode repetir ou pular linhas entre chamadas de range().
   async function buscarTudo(tabela, colunas) {
     let todos = [];
     let from = 0;
     const pageSize = 1000;
     while (true) {
-      const { data, error } = await sb.from(tabela).select(colunas).range(from, from + pageSize - 1);
+      const { data, error } = await sb.from(tabela).select(colunas).order('id').range(from, from + pageSize - 1);
       if (error) { console.error(`Erro ao buscar ${tabela}:`, error); break; }
       if (!data || !data.length) break;
       todos = todos.concat(data);
@@ -2848,6 +2862,16 @@ async function carregarTudoDoSupabase() {
     buscarTudo('pagamentos', '*'),
     buscarTudo('catalogo_marcas', '*'),
   ]);
+
+  // Validação: confirma com o banco quantas linhas DEVERIAM existir (head count)
+  // e avisa se a quantidade recebida via paginação não bateu — sinal de falha na leitura.
+  try {
+    const { count: countReal } = await sb.from('vendas').select('id', { count: 'exact', head: true });
+    if (typeof countReal === 'number' && countReal !== vendasRows.length) {
+      console.warn(`[carregarTudoDoSupabase] Divergência em vendas: banco tem ${countReal}, mas só ${vendasRows.length} foram lidas.`);
+      showToast(`Atenção: o servidor tem ${fmtNum(countReal)} vendas, mas apenas ${fmtNum(vendasRows.length)} foram carregadas. Recarregue a página.`, 'error');
+    }
+  } catch(e) {}
 
   allData = vendasRows.map(r => ({
     data: r.data, hora: r.hora, loja: lojaMap[r.loja_id] || '—',
