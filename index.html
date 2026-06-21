@@ -2563,8 +2563,13 @@ function loadFiles(files) {
         allData.sort((a,b) => a.data.localeCompare(b.data));
         const temPgto = pgtoData.some(r => lojasNovas.includes(r.loja));
         showToast('Enviando para o servidor...', '');
-        await syncVendasParaSupabase(newRows);
-        showToast(`${newRows.length} registros carregados — ${lojasNovas.join(', ')}${temPgto ? ' (formas de pagamento incluídas)' : ''}`, 'success');
+        const syncResult = await syncVendasParaSupabase(newRows);
+        if (!syncResult.ok) {
+          console.error('Erros de sincronização:', syncResult.erros);
+          showToast(`Atenção: ${syncResult.erros[0]} (veja o console para detalhes)`, 'error');
+        } else {
+          showToast(`${newRows.length} registros carregados — ${lojasNovas.join(', ')}${temPgto ? ' (formas de pagamento incluídas)' : ''}`, 'success');
+        }
         salvarLocal();
         initDashboard();
       }
@@ -2641,13 +2646,19 @@ async function getOrCreateLojaId(nomeLoja) {
   let loja = todasLojasCadastro.find(l => l.nome === nomeLoja);
   if (loja) { lojaIdCache[nomeLoja] = loja.id; return loja.id; }
 
-  // Não existe — cria (apenas admin/gerente têm permissão via RLS)
+  // Não existe na lista local — verifica direto no banco antes de criar (evita duplicata)
+  const { data: existenteDB, error: errBusca } = await sb.from('lojas').select('id, nome, cor').eq('nome', nomeLoja).maybeSingle();
+  if (errBusca) console.error(`[getOrCreateLojaId] Erro ao buscar loja "${nomeLoja}":`, errBusca);
+  if (existenteDB) {
+    todasLojasCadastro.push(existenteDB);
+    lojaIdCache[nomeLoja] = existenteDB.id;
+    return existenteDB.id;
+  }
+
+  // Realmente não existe — cria (requer permissão de admin/gerente via RLS)
   const { data, error } = await sb.from('lojas').insert({ nome: nomeLoja }).select('id, nome, cor').single();
   if (error) {
-    console.error('Erro ao criar loja:', error);
-    // Pode já existir (corrida) — tenta buscar de novo
-    const { data: existente } = await sb.from('lojas').select('id, nome, cor').eq('nome', nomeLoja).maybeSingle();
-    if (existente) { todasLojasCadastro.push(existente); lojaIdCache[nomeLoja] = existente.id; return existente.id; }
+    console.error(`[getOrCreateLojaId] Erro ao criar loja "${nomeLoja}":`, error.message, error);
     return null;
   }
   todasLojasCadastro.push(data);
@@ -2657,27 +2668,35 @@ async function getOrCreateLojaId(nomeLoja) {
 
 // ── Envia vendas para o Supabase (substitui o período daquela loja) ────────
 async function syncVendasParaSupabase(rows) {
-  if (!rows.length) return;
+  if (!rows.length) return { ok: true, erros: [] };
   const lojasNovas = [...new Set(rows.map(r => r.loja))];
+  const erros = [];
 
   for (const nomeLoja of lojasNovas) {
     const lojaId = await getOrCreateLojaId(nomeLoja);
-    if (!lojaId) continue;
+    if (!lojaId) { erros.push(`Não foi possível identificar/criar a loja "${nomeLoja}".`); continue; }
     const rowsDaLoja = rows.filter(r => r.loja === nomeLoja);
 
-    // Remove vendas anteriores dessa loja nas datas que estão sendo recarregadas
-    const datasAfetadas = [...new Set(rowsDaLoja.map(r => r.data))];
-    await sb.from('vendas').delete().eq('loja_id', lojaId).in('data', datasAfetadas);
+    // Remove vendas anteriores dessa loja no intervalo de datas (min/max evita query gigante)
+    const datas = rowsDaLoja.map(r => r.data).sort();
+    const { error: delErr } = await sb.from('vendas').delete()
+      .eq('loja_id', lojaId).gte('data', datas[0]).lte('data', datas[datas.length - 1]);
+    if (delErr) erros.push(`Erro ao limpar vendas antigas de "${nomeLoja}": ${delErr.message}`);
 
-    // Insere em lotes de 500 (limite de payload do Supabase)
+    // Insere em lotes de 400
     const payload = rowsDaLoja.map(r => ({
       loja_id: lojaId, data: r.data, hora: r.hora || null, vendedor: r.vendedor || null,
       caixa: r.caixa || null, valor: r.valor, tipo: r.tipo || null
     }));
-    for (let i = 0; i < payload.length; i += 500) {
-      const lote = payload.slice(i, i + 500);
-      const { error } = await sb.from('vendas').insert(lote);
-      if (error) console.error('Erro ao sincronizar vendas:', error);
+    let inseridos = 0;
+    for (let i = 0; i < payload.length; i += 400) {
+      const lote = payload.slice(i, i + 400);
+      const { error, data } = await sb.from('vendas').insert(lote).select('id');
+      if (error) { erros.push(`Erro ao gravar vendas de "${nomeLoja}" (lote ${i}): ${error.message}`); }
+      else inseridos += (data?.length || lote.length);
+    }
+    if (inseridos < rowsDaLoja.length) {
+      erros.push(`"${nomeLoja}": apenas ${inseridos} de ${rowsDaLoja.length} vendas foram salvas no servidor.`);
     }
   }
 
@@ -2686,6 +2705,8 @@ async function syncVendasParaSupabase(rows) {
       tipo_arquivo: 'vendas', registros: rows.length, usuario: currentPerfil?.nome || 'desconhecido'
     });
   } catch(e) {}
+
+  return { ok: erros.length === 0, erros };
 }
 
 // ── Envia produtos vendidos para o Supabase ─────────────────────────────────
