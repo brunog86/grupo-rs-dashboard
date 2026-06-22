@@ -383,6 +383,18 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
   </div>
 </div>
 
+<!-- ════════════════ TELA DE CARREGAMENTO DE DADOS ════════════════ -->
+<div id="dataLoadingScreen" style="display:none;position:fixed;inset:0;z-index:1900;background:linear-gradient(135deg, #0F1523 0%, #1C2030 100%);display:flex;align-items:center;justify-content:center;">
+  <div style="background:var(--bg2);border-radius:16px;padding:40px 44px;width:420px;box-shadow:0 20px 60px rgba(0,0,0,0.3);text-align:center;">
+    <div style="font-weight:800;font-size:22px;margin-bottom:6px;">Grupo <span style="color:var(--orange)">RS</span></div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:24px;">Carregando dados do servidor...</div>
+    <div style="background:var(--bg4);border-radius:99px;height:8px;overflow:hidden;margin-bottom:12px;">
+      <div id="dataLoadingBar" style="background:var(--orange);height:8px;width:5%;border-radius:99px;transition:width 0.3s;"></div>
+    </div>
+    <div id="dataLoadingText" style="font-size:12.5px;color:var(--text2);">Iniciando...</div>
+  </div>
+</div>
+
 <!-- ════════════════ MODAL: NOVO/EDITAR USUÁRIO ════════════════ -->
 <div class="modal-overlay" id="userModal">
   <div class="modal-box">
@@ -471,7 +483,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
       <div class="filter-bar">
         <span class="filter-label">Data:</span>
         <input type="date" class="date-input" id="dateFilter">
-        <button class="apply-btn" onclick="renderDiario()">Aplicar</button>
+        <button class="apply-btn" onclick="renderDiarioLeve()">Aplicar</button>
         <button class="apply-btn" onclick="setToday()">Hoje</button>
       </div>
 
@@ -1074,6 +1086,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentUser   = null;  // { id, email }
 let currentPerfil = null;  // { id, nome, email, papel, ativo }
 let lojasPermitidas = [];  // array de nomes de loja que o usuário pode ver (vazio = todas, se admin)
+let mesesDisponiveisCache = [];
 let todasLojasCadastro = []; // [{id, nome, cor}] vindas da tabela lojas
 
 function isAdmin()   { return currentPerfil?.papel === 'admin'; }
@@ -1180,24 +1193,24 @@ async function iniciarAposLogin() {
 
   await carregarTodasLojas();
 
-  // ── Carrega os dados do Supabase (fonte de verdade compartilhada) ─────────
-  const temDados = await carregarTudoDoSupabase();
+  // ── Carregamento leve: só confirma se existem dados, sem baixar tudo ──────
+  document.getElementById('dataLoadingScreen').style.display = 'flex';
+  atualizarProgressoCarregamento(30, 'Verificando dados disponíveis...');
+
+  const { count: totalVendas } = await sb.from('vendas').select('id', { count: 'exact', head: true });
+  const mesesDisp = await buscarMesesDisponiveis();
+  mesesDisponiveisCache = mesesDisp;
+
+  atualizarProgressoCarregamento(100, 'Pronto!');
+  document.getElementById('dataLoadingScreen').style.display = 'none';
+
+  const temDados = (totalVendas || 0) > 0;
+
   if (temDados) {
-    if (finPagarData.length)   { document.getElementById('finPagarStatus').textContent = `✓ ${finPagarData.length} lançamentos`; document.getElementById('finPagarStatus').style.color = 'var(--red)'; }
-    if (finReceberData.length) { document.getElementById('finReceberStatus').textContent = `✓ ${finReceberData.length} lançamentos`; document.getElementById('finReceberStatus').style.color = 'var(--green)'; }
-    if (finPagarData.length || finReceberData.length) populateFinMesFilter();
-    if (Object.keys(catalogoMarcas).length) { const count = Object.keys(catalogoMarcas).length; document.getElementById('catalogoStatus').textContent = `✓ ${count} produtos mapeados`; document.getElementById('catalogoStatus').style.color = 'var(--green)'; }
-    if (prodData.length) { document.getElementById('prodFileStatus').textContent = `✓ ${prodData.length} itens carregados`; document.getElementById('prodFileStatus').style.color = 'var(--green)'; }
-    if (pgtoData.length) { document.getElementById('pgtoStatus').textContent = `✓ ${pgtoData.length} vendas carregadas`; document.getElementById('pgtoStatus').style.color = 'var(--blue)'; const lojas = [...new Set(pgtoData.map(r => r.loja))].sort(); document.getElementById('pgtoLojaFilter').innerHTML = '<option value="">Todas as lojas</option>' + lojas.map(l => `<option value="${l}">${l}</option>`).join(''); }
-    if (prodData.length) {
-      const lojas = [...new Set(prodData.map(r => r.loja))].sort();
-      const sel = document.getElementById('prodLojaFilter');
-      if (sel) sel.innerHTML = '<option value="">Todas as lojas</option>' + lojas.map(l => `<option value="${l}">${l}</option>`).join('');
-      populateProdMesSelectors(false);
-    }
-    showToast('Dados carregados do servidor.', 'success');
-    salvarLocal(); // mantém cópia local como cache, útil se ficar offline momentaneamente
-    initDashboard();
+    document.getElementById('uploadZone').style.display = 'none';
+    document.getElementById('dashboardArea').style.display = 'block';
+    showToast('Conectado ao servidor.', 'success');
+    await initDashboardLeve();
   } else {
     // Sem dados no servidor ainda — mostra a tela de upload normalmente
     document.getElementById('uploadZone').style.display = 'block';
@@ -1599,6 +1612,77 @@ function makeMetrics(container, cards) {
       <div class="metric-value">${c.value}</div>
       ${c.sub ? `<div class="metric-sub ${c.cls||'neutral'}">${c.sub}</div>` : ''}
     </div>`).join('');
+}
+
+// ── Versão leve da Visão Diária — usa RPC em vez de allData completo ──────
+async function renderDiarioLeve() {
+  const date = document.getElementById('dateFilter').value || new Date().toISOString().split('T')[0];
+  const lojaFil = document.getElementById('diarioLojaFilter')?.value || '';
+
+  const resumo = await buscarResumoFaturamento(date, date, lojaFil);
+  const comDados = resumo.filter(r => r.qty > 0);
+
+  const totalFat = comDados.reduce((s,r) => s + r.fat, 0);
+  const totalQty = comDados.reduce((s,r) => s + r.qty, 0);
+  const ticket = totalQty > 0 ? totalFat / totalQty : 0;
+
+  makeMetrics(document.getElementById('diarioMetrics'), [
+    { label: 'Faturamento total', value: fmt(totalFat) },
+    { label: 'Qtd. de vendas', value: fmtNum(totalQty) },
+    { label: 'Ticket médio', value: fmt(ticket) },
+    { label: 'Lojas ativas', value: comDados.length }
+  ]);
+
+  const byLoja = {};
+  comDados.forEach(r => { byLoja[r.loja] = { fat: r.fat, qty: r.qty }; });
+  makeLojasRows(byLoja, document.getElementById('diarioLojas'), null);
+
+  const lojasSort = comDados.map(r => r.loja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
+  const colors = lojasSort.map(l => lojaColorMap[l] || '#4F7EFF');
+
+  destroyChart('diarioFat'); destroyChart('diarioTicket'); destroyChart('diarioHora');
+
+  const ctxFat = document.getElementById('chartDiarioFat').getContext('2d');
+  charts['diarioFat'] = new Chart(ctxFat, {
+    type: 'bar',
+    data: { labels: lojasSort, datasets: [{ data: lojasSort.map(l => byLoja[l].fat), backgroundColor: colors, borderRadius: 6, borderSkipped: false }] },
+    options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } } } }
+  });
+
+  const ctxTicket = document.getElementById('chartDiarioTicket').getContext('2d');
+  charts['diarioTicket'] = new Chart(ctxTicket, {
+    type: 'bar',
+    data: { labels: lojasSort, datasets: [{ data: lojasSort.map(l => byLoja[l].qty > 0 ? byLoja[l].fat / byLoja[l].qty : 0), backgroundColor: colors.map(c => c + 'AA'), borderRadius: 6, borderSkipped: false }] },
+    options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmt(v) } } } }
+  });
+
+  // Gráfico por hora — busca só o dia selecionado via RPC (leve)
+  const porHora = await buscarVendasPorHora(date, lojaFil);
+  const horaLabels = [];
+  for (let h = 8; h <= 21; h++) horaLabels.push(String(h).padStart(2,'0') + 'h');
+  const horaByLoja = {};
+  lojasSort.forEach(l => { horaByLoja[l] = {}; horaLabels.forEach(h => horaByLoja[l][h] = 0); });
+  porHora.forEach(r => {
+    if (horaByLoja[r.loja] && horaByLoja[r.loja][r.hora] !== undefined) horaByLoja[r.loja][r.hora] += r.valor;
+  });
+
+  const ctxHora = document.getElementById('chartDiarioHora').getContext('2d');
+  charts['diarioHora'] = new Chart(ctxHora, {
+    type: 'bar',
+    data: {
+      labels: horaLabels,
+      datasets: lojasSort.map((l, i) => ({
+        label: l, data: horaLabels.map(h => horaByLoja[l][h]),
+        backgroundColor: colors[i], borderRadius: i === lojasSort.length - 1 ? 5 : 0,
+        borderSkipped: false, stack: 'horas'
+      }))
+    },
+    options: {
+      ...chartDefaults,
+      plugins: { ...chartDefaults.plugins, legend: { display: true, position: 'top', labels: { color: '#9BA5C0', font: { family: 'Plus Jakarta Sans', size: 11 }, padding: 14, boxWidth: 12 } } },
+      scales: { x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } } }
+    }
+  });
 }
 
 function renderDiario() {
@@ -2206,7 +2290,7 @@ function renderVendedores() {
 function setToday() {
   const today = new Date().toISOString().split('T')[0];
   document.getElementById('dateFilter').value = today;
-  renderDiario();
+  renderDiarioLeve();
 }
 function setVendMes() {
   const now = new Date();
@@ -2214,6 +2298,49 @@ function setVendMes() {
   document.getElementById('vendDateStart').value = `${y}-${m}-01`;
   document.getElementById('vendDateEnd').value = now.toISOString().split('T')[0];
   renderVendedores();
+}
+
+// ── Inicialização leve: prepara a UI sem baixar todos os dados de uma vez ──
+// Substitui o antigo initDashboard() no fluxo de login — cada aba busca seus
+// próprios dados via RPC quando é aberta ou quando o filtro muda.
+async function initDashboardLeve() {
+  try {
+    assignLojaColorsFromCadastro();
+
+    const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+    ['prodLojaFilter', 'vendLojaFilter', 'pgtoLojaFilter', 'finPagarLojaFilter', 'finReceberLojaFilter', 'analiseLojaFilter', 'evolLojaFilter']
+      .forEach(id => {
+        const sel = document.getElementById(id);
+        if (sel) sel.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+      });
+
+    const hoje = new Date();
+    const y = hoje.getFullYear(), m = String(hoje.getMonth()+1).padStart(2,'0');
+    activeMonth = mesesDisponiveisCache.length
+      ? mesesDisponiveisCache[mesesDisponiveisCache.length - 1].substring(0,7)
+      : `${y}-${m}`;
+
+    document.getElementById('dateFilter').value = hoje.toISOString().split('T')[0];
+    document.getElementById('vendDateStart').value = `${activeMonth}-01`;
+    document.getElementById('vendDateEnd').value = hoje.toISOString().split('T')[0];
+
+    document.getElementById('periodBadge').textContent = mesesDisponiveisCache.length
+      ? `${mesesDisponiveisCache[0]} → ${mesesDisponiveisCache[mesesDisponiveisCache.length-1]}`
+      : 'Sem período definido';
+
+    await renderDiarioLeve();
+  } catch(e) {
+    console.error('Erro ao iniciar dashboard leve:', e);
+    showToast('Erro ao carregar o painel. Recarregue a página.', 'error');
+  }
+}
+
+function assignLojaColorsFromCadastro() {
+  const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+  nomesLojas.forEach((nome, i) => {
+    const cadastro = todasLojasCadastro.find(l => l.nome === nome);
+    lojaColorMap[nome] = (cadastro && cadastro.cor) || LOJA_COLORS[i % LOJA_COLORS.length];
+  });
 }
 
 // ── Filtra dados conforme permissão de loja do usuário logado ──────────────
@@ -2830,39 +2957,188 @@ async function syncCatalogoParaSupabase(catalogo) {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// BUSCA SOB DEMANDA (RPC) — substitui o carregamento de "tudo de uma vez"
+// As funções SQL fazem o cálculo pesado no banco; aqui só pedimos o resultado.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Cache simples em memória por chave de consulta, evita repetir a mesma RPC
+// múltiplas vezes na mesma sessão se o filtro não mudou.
+const rpcCache = {};
+function rpcCacheKey(fn, params) { return fn + '::' + JSON.stringify(params); }
+
+async function callRpc(fnName, params, useCache = true) {
+  const key = rpcCacheKey(fnName, params);
+  if (useCache && rpcCache[key]) return rpcCache[key];
+  const { data, error } = await sb.rpc(fnName, params);
+  if (error) { console.error(`[RPC ${fnName}]`, error); return []; }
+  if (useCache) rpcCache[key] = data;
+  return data || [];
+}
+function limparRpcCache() { Object.keys(rpcCache).forEach(k => delete rpcCache[k]); }
+
+// Resolve o loja_id (uuid) a partir do nome — usa o cadastro já carregado
+function lojaIdPorNome(nome) {
+  if (!nome) return null;
+  const l = todasLojasCadastro.find(x => x.nome === nome);
+  return l ? l.id : null;
+}
+
+// ── Resumo de faturamento por loja em um período ────────────────────────────
+async function buscarResumoFaturamento(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_resumo_faturamento', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  });
+  return rows.map(r => ({
+    loja: r.loja_nome, fat: parseFloat(r.faturamento), qty: parseInt(r.qtd_vendas),
+    ticket: parseFloat(r.ticket_medio)
+  }));
+}
+
+// ── Série diária de faturamento (para gráficos) ─────────────────────────────
+async function buscarFaturamentoDiario(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_faturamento_diario', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false); // sem cache — período muda com frequência
+  return rows.map(r => ({
+    data: r.dia, loja: r.loja_nome, valor: parseFloat(r.faturamento), qty: parseInt(r.qtd_vendas)
+  }));
+}
+
+// ── Série mensal de faturamento (evolução de longo prazo) ───────────────────
+async function buscarFaturamentoMensal(lojaNome) {
+  const rows = await callRpc('fn_faturamento_mensal', { p_loja_id: lojaIdPorNome(lojaNome) });
+  return rows.map(r => ({
+    mes: r.mes, loja: r.loja_nome, valor: parseFloat(r.faturamento), qty: parseInt(r.qtd_vendas)
+  }));
+}
+
+// ── Ranking de vendedores ───────────────────────────────────────────────────
+async function buscarRankingVendedores(dataInicio, dataFim, lojaNome, limite = 50) {
+  const rows = await callRpc('fn_ranking_vendedores', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome), p_limite: limite
+  }, false);
+  return rows.map(r => ({
+    vendedor: r.vendedor, loja: r.loja_nome, fat: parseFloat(r.faturamento),
+    qty: parseInt(r.qtd_vendas), ticket: parseFloat(r.ticket_medio)
+  }));
+}
+
+// ── Ranking de produtos ──────────────────────────────────────────────────────
+async function buscarRankingProdutos(dataInicio, dataFim, lojaNome, marca, limite = 200) {
+  const rows = await callRpc('fn_ranking_produtos', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome),
+    p_marca: marca || null, p_limite: limite
+  }, false);
+  return rows.map(r => ({
+    produto: r.produto, marca: r.marca, barras: r.barras,
+    fat: parseFloat(r.faturamento), qty: parseFloat(r.quantidade), preco: parseFloat(r.preco_medio)
+  }));
+}
+
+// ── Ranking de marcas ────────────────────────────────────────────────────────
+async function buscarRankingMarcas(dataInicio, dataFim, lojaNome, limite = 100) {
+  const rows = await callRpc('fn_ranking_marcas', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome), p_limite: limite
+  }, false);
+  return rows.map(r => ({ marca: r.marca, fat: parseFloat(r.faturamento), qty: parseFloat(r.quantidade) }));
+}
+
+// ── Resumo financeiro (vencido/a vencer/quitado) por loja ──────────────────
+async function buscarResumoFinanceiro(lojaNome) {
+  const rows = await callRpc('fn_resumo_financeiro', { p_loja_id: lojaIdPorNome(lojaNome) }, false);
+  return rows.map(r => ({
+    loja: r.loja_nome, tipo: r.tipo, vencido: parseFloat(r.total_vencido),
+    aVencer: parseFloat(r.total_a_vencer), quitado: parseFloat(r.total_quitado)
+  }));
+}
+
+// ── Lista paginada de lançamentos financeiros ───────────────────────────────
+async function buscarListaFinanceiro(tipo, opts = {}) {
+  const rows = await callRpc('fn_lista_financeiro', {
+    p_tipo: tipo, p_loja_id: lojaIdPorNome(opts.loja), p_data_inicio: opts.de || null,
+    p_data_fim: opts.ate || null, p_situacao: opts.situacao || null,
+    p_fornecedor: opts.fornecedor || null, p_limite: opts.limite || 200, p_offset: opts.offset || 0
+  }, false);
+  return rows.map(r => ({
+    loja: r.loja_nome, emissao: r.emissao, situacao: r.situacao, categoria: r.categoria,
+    dtVenc: r.dt_vencimento, dtQuit: r.dt_quitacao, valorDoc: parseFloat(r.valor_doc),
+    valorQuit: parseFloat(r.valor_quit), historico: r.historico, fornecedor: r.fornecedor
+  }));
+}
+
+// ── Resumo de formas de pagamento ────────────────────────────────────────────
+async function buscarResumoPagamentos(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_resumo_pagamentos', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({ forma: r.forma, fat: parseFloat(r.faturamento), qty: parseInt(r.qtd_vendas) }));
+}
+
+// ── Vendas por hora do dia (gráfico da Visão Diária) ────────────────────────
+async function buscarVendasPorHora(data, lojaNome) {
+  const rows = await callRpc('fn_vendas_por_hora', {
+    p_data: data, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({ hora: r.hora, loja: r.loja_nome, valor: parseFloat(r.faturamento) }));
+}
+
+// ── Lista de meses disponíveis (para popular seletores sem baixar tudo) ────
+async function buscarMesesDisponiveis() {
+  const rows = await callRpc('fn_meses_disponiveis', {});
+  return rows.map(r => r.mes).filter(Boolean).sort();
+}
+
+function atualizarProgressoCarregamento(pct, texto) {
+  const bar = document.getElementById('dataLoadingBar');
+  const txt = document.getElementById('dataLoadingText');
+  if (bar) bar.style.width = Math.min(100, Math.max(5, pct)) + '%';
+  if (txt) txt.textContent = texto;
+}
+
 // ── Carrega TUDO do Supabase (respeitando RLS/permissão automaticamente) ───
-async function carregarTudoDoSupabase() {
-  showToast('Carregando dados do servidor...', '');
+async function carregarTudoDoSupabase(onProgress) {
+  const report = (pct, texto) => { if (onProgress) onProgress(pct, texto); };
+  report(5, 'Conectando ao servidor...');
 
   const lojaMap = {}; // id → nome, para reconstruir os campos "loja" nos objetos locais
   todasLojasCadastro.forEach(l => lojaMap[l.id] = l.nome);
 
-  // Busca em paralelo, paginando com range para evitar limite de 1000 linhas do Supabase
+  // Busca sequencialmente (em vez de paralelo) para mostrar progresso real ao usuário.
   // IMPORTANTE: usa order() para garantir ordem estável entre páginas —
   // sem isso, o Postgres pode repetir ou pular linhas entre chamadas de range().
   // orderCol é configurável pois catalogo_marcas usa 'barras' como chave (não tem 'id').
-  async function buscarTudo(tabela, colunas, orderCol = 'id') {
+  async function buscarTudo(tabela, colunas, orderCol = 'id', labelAmigavel = tabela) {
     let todos = [];
     let from = 0;
     const pageSize = 1000;
+
+    // Pega contagem total primeiro, para mostrar "X de Y"
+    const { count: totalEsperado } = await sb.from(tabela).select(orderCol, { count: 'exact', head: true });
+
     while (true) {
       const { data, error } = await sb.from(tabela).select(colunas).order(orderCol).range(from, from + pageSize - 1);
       if (error) { console.error(`Erro ao buscar ${tabela}:`, error); break; }
       if (!data || !data.length) break;
       todos = todos.concat(data);
+      if (totalEsperado) {
+        report(10 + Math.round((todos.length / totalEsperado) * 70), `Carregando ${labelAmigavel} — ${fmtNum(todos.length)} de ${fmtNum(totalEsperado)}`);
+      } else {
+        report(10, `Carregando ${labelAmigavel}...`);
+      }
       if (data.length < pageSize) break;
       from += pageSize;
     }
     return todos;
   }
 
-  const [vendasRows, prodRows, finRows, pgtoRows, catalogoRows] = await Promise.all([
-    buscarTudo('vendas', '*'),
-    buscarTudo('produtos_vendidos', '*'),
-    buscarTudo('financeiro', '*'),
-    buscarTudo('pagamentos', '*'),
-    buscarTudo('catalogo_marcas', '*', 'barras'),
-  ]);
+  const vendasRows = await buscarTudo('vendas', '*', 'id', 'vendas');
+  const prodRows   = await buscarTudo('produtos_vendidos', '*', 'id', 'produtos');
+  const finRows    = await buscarTudo('financeiro', '*', 'id', 'financeiro');
+  const pgtoRows   = await buscarTudo('pagamentos', '*', 'id', 'pagamentos');
+  const catalogoRows = await buscarTudo('catalogo_marcas', '*', 'barras', 'catálogo de marcas');
+
+  report(85, 'Organizando dados...');
 
   // Validação: confirma com o banco quantas linhas DEVERIAM existir (head count)
   // e avisa se a quantidade recebida via paginação não bateu — sinal de falha na leitura.
@@ -2873,6 +3149,8 @@ async function carregarTudoDoSupabase() {
       showToast(`Atenção: o servidor tem ${fmtNum(countReal)} vendas, mas apenas ${fmtNum(vendasRows.length)} foram carregadas. Recarregue a página.`, 'error');
     }
   } catch(e) {}
+
+  report(95, 'Quase lá...');
 
   allData = vendasRows.map(r => ({
     data: r.data, hora: r.hora, loja: lojaMap[r.loja_id] || '—',
@@ -2907,6 +3185,8 @@ async function carregarTudoDoSupabase() {
 
   catalogoMarcas = {};
   catalogoRows.forEach(r => { catalogoMarcas[r.barras] = r.marca; });
+
+  report(100, 'Pronto!');
 
   return allData.length > 0 || prodData.length > 0 || finPagarData.length > 0 ||
          finReceberData.length > 0 || pgtoData.length > 0;
@@ -5094,6 +5374,7 @@ function switchTab(name, btn) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'diario')      renderDiarioLeve();
   if (name === 'mensal')      renderMensal();
   if (name === 'vendedores')  renderVendedores();
   if (name === 'produtos')    renderProdutos();
