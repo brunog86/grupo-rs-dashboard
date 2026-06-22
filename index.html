@@ -1757,6 +1757,170 @@ function renderDiario() {
 }
 
 let activeMonth = '';
+// ── Versão leve da Visão Mensal — usa RPC em vez de allData completo ──────
+function diasUteisNoMes(ym) {
+  if (!ym) return 26;
+  const [y, m] = ym.split('-').map(Number);
+  const totalDias = new Date(y, m, 0).getDate();
+  let uteis = 0;
+  for (let d = 1; d <= totalDias; d++) {
+    const dow = new Date(y, m - 1, d).getDay();
+    if (dow !== 0) uteis++; // exclui só domingo
+  }
+  return uteis;
+}
+
+async function renderMensalLeve() {
+  if (!activeMonth && mesesDisponiveisCache.length) {
+    activeMonth = mesesDisponiveisCache[mesesDisponiveisCache.length - 1].substring(0,7);
+  }
+
+  // Seletor de meses (a partir do cache leve, sem baixar vendas)
+  const mesesUnicos = [...new Set(mesesDisponiveisCache.map(m => m.substring(0,7)))];
+  const sel = document.getElementById('monthSelector');
+  sel.innerHTML = mesesUnicos.map(m => {
+    const [y, mo] = m.split('-');
+    const label = new Date(parseInt(y), parseInt(mo)-1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    return `<button class="month-btn ${m === activeMonth ? 'active' : ''}" onclick="selectMonthLeve('${m}')">${label}</button>`;
+  }).join('');
+
+  if (!activeMonth) { document.getElementById('mensalLojas').innerHTML = '<div class="empty"><div class="empty-icon">📭</div>Sem dados</div>'; return; }
+
+  const lojaFil = document.getElementById('mensalLojaFilter')?.value || '';
+  const primeiroDia = `${activeMonth}-01`;
+  const [y, m] = activeMonth.split('-').map(Number);
+  const ultimoDiaNum = new Date(y, m, 0).getDate();
+  const ultimoDia = `${activeMonth}-${String(ultimoDiaNum).padStart(2,'0')}`;
+
+  const resumo = await buscarResumoFaturamento(primeiroDia, ultimoDia, lojaFil);
+  const comDados = resumo.filter(r => r.qty > 0);
+
+  const totalFat = comDados.reduce((s,r) => s + r.fat, 0);
+  const totalQty = comDados.reduce((s,r) => s + r.qty, 0);
+  const ticket = totalQty > 0 ? totalFat / totalQty : 0;
+
+  // Série diária para calcular média/tendência e o gráfico de evolução
+  const diario = await buscarFaturamentoDiario(primeiroDia, ultimoDia, lojaFil);
+  const diasMap = {};
+  diario.forEach(r => { diasMap[r.data] = (diasMap[r.data] || 0) + r.valor; });
+  const diasComFat = Object.keys(diasMap).filter(d => diasMap[d] > 0);
+  const mediaDiaria = diasComFat.length > 0 ? totalFat / diasComFat.length : 0;
+
+  const uteisMes = diasUteisNoMes(activeMonth);
+  const tendencia = mediaDiaria * uteisMes;
+
+  makeMetrics(document.getElementById('mensalMetrics'), [
+    { label: 'Faturamento do mês', value: fmt(totalFat), sub: `Média/dia: ${fmt(mediaDiaria)}`, cls: 'neutral' },
+    { label: `Tendência (${uteisMes} d.u.)`, value: fmt(tendencia), sub: tendencia > totalFat ? `▲ ${fmt(tendencia - totalFat)} acima do atual` : `▼ ${fmt(totalFat - tendencia)} abaixo do projetado`, cls: tendencia >= totalFat ? 'up' : 'neutral' },
+    { label: 'Total de vendas', value: fmtNum(totalQty) },
+    { label: 'Ticket médio', value: fmt(ticket) },
+    { label: 'Lojas ativas', value: comDados.length }
+  ]);
+
+  const byLoja = {};
+  comDados.forEach(r => { byLoja[r.loja] = { fat: r.fat, qty: r.qty }; });
+
+  // Média/dia e tendência por loja, calculados a partir da série diária por loja
+  const diarioPorLoja = {};
+  diario.forEach(r => {
+    if (!diarioPorLoja[r.loja]) diarioPorLoja[r.loja] = {};
+    diarioPorLoja[r.loja][r.data] = (diarioPorLoja[r.loja][r.data] || 0) + r.valor;
+  });
+  const allRowsSimulado = []; // makeLojasRows espera um array de linhas {loja, data, valor}
+  Object.entries(diarioPorLoja).forEach(([loja, dias]) => {
+    Object.entries(dias).forEach(([data, valor]) => allRowsSimulado.push({ loja, data, valor }));
+  });
+
+  makeLojasRows(byLoja, document.getElementById('mensalLojas'), allRowsSimulado, uteisMes);
+
+  const lojasSort = comDados.map(r => r.loja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
+  const colors = lojasSort.map(l => lojaColorMap[l] || '#4F7EFF');
+
+  destroyChart('mensalFat'); destroyChart('mensalTicket'); destroyChart('mensalEv'); destroyChart('mensalHora'); destroyChart('mensalDiaLoja');
+
+  const ctxMF = document.getElementById('chartMensalFat').getContext('2d');
+  charts['mensalFat'] = new Chart(ctxMF, {
+    type: 'doughnut',
+    data: { labels: lojasSort, datasets: [{ data: lojasSort.map(l => byLoja[l].fat), backgroundColor: colors, borderWidth: 0, hoverOffset: 8 }] },
+    options: { plugins: { legend: { display: true, position: 'bottom', labels: { color: '#8B90A4', font: { family: 'DM Sans', size: 11 }, padding: 12, boxWidth: 10, boxHeight: 10 } }, tooltip: chartDefaults.plugins.tooltip }, cutout: '65%' }
+  });
+
+  const ctxMT = document.getElementById('chartMensalTicket').getContext('2d');
+  charts['mensalTicket'] = new Chart(ctxMT, {
+    type: 'bar',
+    data: { labels: lojasSort, datasets: [{ data: lojasSort.map(l => byLoja[l].qty > 0 ? byLoja[l].fat / byLoja[l].qty : 0), backgroundColor: colors.map(c => c + 'BB'), borderRadius: 6, borderSkipped: false }] },
+    options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmt(v) } } } }
+  });
+
+  const diasSort = Object.keys(diasMap).sort();
+  const diasLabels = diasSort.map(d => { const p = d.split(/[-\/]/); return p.length >= 3 ? (p[0].length===4 ? p[2]+'/'+p[1] : p[0]+'/'+p[1]) : d; });
+
+  const ctxEv = document.getElementById('chartMensalEvolucao').getContext('2d');
+  charts['mensalEv'] = new Chart(ctxEv, {
+    type: 'line',
+    data: { labels: diasLabels,
+      datasets: [{ data: diasSort.map(d => diasMap[d]), borderColor: '#2DD4A0', backgroundColor: 'rgba(45,212,160,0.07)', tension: 0.4, fill: true, pointBackgroundColor: '#2DD4A0', pointRadius: 3 }] },
+    options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } } } }
+  });
+
+  // Faturamento por dia por loja — stacked columns
+  const diasByLoja = {};
+  lojasSort.forEach(l => { diasByLoja[l] = {}; diasSort.forEach(d => diasByLoja[l][d] = 0); });
+  diario.forEach(r => { if (diasByLoja[r.loja]) diasByLoja[r.loja][r.data] = (diasByLoja[r.loja][r.data] || 0) + r.valor; });
+  const ctxDL = document.getElementById('chartMensalDiaLoja').getContext('2d');
+  charts['mensalDiaLoja'] = new Chart(ctxDL, {
+    type: 'bar',
+    data: {
+      labels: diasLabels,
+      datasets: lojasSort.map((l, i) => ({
+        label: l,
+        data: diasSort.map(d => diasByLoja[l][d] || 0),
+        backgroundColor: colors[i],
+        borderRadius: i === lojasSort.length - 1 ? 4 : 0,
+        borderSkipped: false,
+        stack: 'dias'
+      }))
+    },
+    options: {
+      ...chartDefaults,
+      plugins: { ...chartDefaults.plugins, legend: { display: true, position: 'bottom', labels: { color: '#8B90A4', font: { family: 'DM Sans', size: 11 }, padding: 12, boxWidth: 10, boxHeight: 10 } } },
+      scales: { ...chartDefaults.scales, x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } } }
+    }
+  });
+
+  // Faturamento por hora do dia, agregado no mês
+  const porHora = await buscarVendasPorHoraPeriodo(primeiroDia, ultimoDia, lojaFil);
+  const horaLabelsM = [];
+  for (let h = 8; h <= 21; h++) horaLabelsM.push(String(h).padStart(2,'0') + 'h');
+  const horaByLojaM = {};
+  lojasSort.forEach(l => { horaByLojaM[l] = {}; horaLabelsM.forEach(h => horaByLojaM[l][h] = 0); });
+  porHora.forEach(r => {
+    if (horaByLojaM[r.loja] && horaByLojaM[r.loja][r.hora] !== undefined) horaByLojaM[r.loja][r.hora] += r.valor;
+  });
+  const ctxHM = document.getElementById('chartMensalHora').getContext('2d');
+  charts['mensalHora'] = new Chart(ctxHM, {
+    type: 'bar',
+    data: {
+      labels: horaLabelsM,
+      datasets: lojasSort.map((l, i) => ({
+        label: l,
+        data: horaLabelsM.map(h => horaByLojaM[l][h]),
+        backgroundColor: colors[i],
+        borderRadius: i === lojasSort.length - 1 ? 5 : 0,
+        borderSkipped: false,
+        stack: 'horas'
+      }))
+    },
+    options: {
+      ...chartDefaults,
+      plugins: { ...chartDefaults.plugins, legend: { display: true, position: 'bottom', labels: { color: '#8B90A4', font: { family: 'DM Sans', size: 11 }, padding: 12, boxWidth: 10, boxHeight: 10 } } },
+      scales: { ...chartDefaults.scales, x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } } }
+    }
+  });
+}
+
+function selectMonthLeve(m) { activeMonth = m; renderMensalLeve(); }
+
 function renderMensal() {
   const months = getUniqueMonths();
   const sel = document.getElementById('monthSelector');
@@ -3079,6 +3243,14 @@ async function buscarResumoPagamentos(dataInicio, dataFim, lojaNome) {
 async function buscarVendasPorHora(data, lojaNome) {
   const rows = await callRpc('fn_vendas_por_hora', {
     p_data: data, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({ hora: r.hora, loja: r.loja_nome, valor: parseFloat(r.faturamento) }));
+}
+
+// ── Vendas por hora agregado num período (Visão Mensal) ─────────────────────
+async function buscarVendasPorHoraPeriodo(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_vendas_por_hora_periodo', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
   }, false);
   return rows.map(r => ({ hora: r.hora, loja: r.loja_nome, valor: parseFloat(r.faturamento) }));
 }
@@ -5375,7 +5547,7 @@ function switchTab(name, btn) {
   btn.classList.add('active');
   document.getElementById('tab-' + name).classList.add('active');
   if (name === 'diario')      renderDiarioLeve();
-  if (name === 'mensal')      renderMensal();
+  if (name === 'mensal')      renderMensalLeve();
   if (name === 'vendedores')  renderVendedores();
   if (name === 'produtos')    renderProdutos();
   if (name === 'financeiro')  renderFinanceiro();
