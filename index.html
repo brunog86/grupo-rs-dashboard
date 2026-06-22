@@ -510,6 +510,14 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 
     <!-- MENSAL -->
     <div class="tab-content" id="tab-mensal">
+      <div class="filter-bar" style="margin-bottom:16px;">
+        <span class="filter-label">Mês/Ano:</span>
+        <select class="date-input" id="mensalMesSelect" onchange="onMensalMesChange()" style="min-width:180px"></select>
+        <span class="filter-label" style="margin-left:8px">Loja:</span>
+        <select class="date-input" id="mensalLojaFilter" onchange="renderMensalLeve()" style="min-width:160px">
+          <option value="">Todas as lojas</option>
+        </select>
+      </div>
       <div class="month-selector" id="monthSelector"></div>
 
       <div class="metrics-grid" id="mensalMetrics"></div>
@@ -1771,16 +1779,39 @@ function diasUteisNoMes(ym) {
 }
 
 async function renderMensalLeve() {
+  // Garante que temos a lista de meses mais atual (sem cache, pode ter mudado)
+  const mesesDisp = await callRpc('fn_meses_disponiveis', {}, false);
+  mesesDisponiveisCache = mesesDisp.map(r => r.mes).filter(Boolean).sort();
+
   if (!activeMonth && mesesDisponiveisCache.length) {
     activeMonth = mesesDisponiveisCache[mesesDisponiveisCache.length - 1].substring(0,7);
   }
 
-  // Seletor de meses (a partir do cache leve, sem baixar vendas)
-  const mesesUnicos = [...new Set(mesesDisponiveisCache.map(m => m.substring(0,7)))];
+  const mesesUnicos = [...new Set(mesesDisponiveisCache.map(m => m.substring(0,7)))].sort();
+
+  // Popula o dropdown de Mês/Ano
+  const mesSelect = document.getElementById('mensalMesSelect');
+  if (mesSelect) {
+    mesSelect.innerHTML = mesesUnicos.map(m => {
+      const [y, mo] = m.split('-');
+      const label = new Date(parseInt(y), parseInt(mo)-1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+      return `<option value="${m}" ${m === activeMonth ? 'selected' : ''}>${label}</option>`;
+    }).join('');
+  }
+
+  // Popula filtro de loja
+  const lojaSelect = document.getElementById('mensalLojaFilter');
+  if (lojaSelect && !lojaSelect.dataset.populated) {
+    const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+    lojaSelect.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+    lojaSelect.dataset.populated = '1';
+  }
+
+  // Botões de mês (mantidos para navegação rápida visual, sincronizados com o dropdown)
   const sel = document.getElementById('monthSelector');
   sel.innerHTML = mesesUnicos.map(m => {
     const [y, mo] = m.split('-');
-    const label = new Date(parseInt(y), parseInt(mo)-1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    const label = new Date(parseInt(y), parseInt(mo)-1, 1).toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
     return `<button class="month-btn ${m === activeMonth ? 'active' : ''}" onclick="selectMonthLeve('${m}')">${label}</button>`;
   }).join('');
 
@@ -1920,6 +1951,10 @@ async function renderMensalLeve() {
 }
 
 function selectMonthLeve(m) { activeMonth = m; renderMensalLeve(); }
+function onMensalMesChange() {
+  activeMonth = document.getElementById('mensalMesSelect').value;
+  renderMensalLeve();
+}
 
 function renderMensal() {
   const months = getUniqueMonths();
