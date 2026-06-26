@@ -1211,8 +1211,8 @@ async function iniciarAposLogin() {
     const [lojasResult, existeResult, mResult] = await Promise.all([
       carregarTodasLojas(),
       // Checagem leve: só confirma se EXISTE pelo menos 1 linha, sem contar tudo (muito mais rápido)
-      Promise.race([sb.from('vendas').select('id').limit(1), timeoutGenerico(15000)]),
-      Promise.race([buscarMesesDisponiveis(), timeoutGenerico(15000)]),
+      Promise.race([sb.from('vendas').select('id').limit(1), timeoutGenerico(25000)]),
+      Promise.race([buscarMesesDisponiveis(), timeoutGenerico(25000)]),
     ]);
     temAlgumaVenda = (existeResult.data || []).length > 0;
     mesesResult = mResult;
@@ -3207,7 +3207,7 @@ async function callRpc(fnName, params, useCache = true) {
   const key = rpcCacheKey(fnName, params);
   if (useCache && rpcCache[key]) return rpcCache[key];
 
-  const TIMEOUT_MS = 15000; // nunca espera mais que 15s por uma chamada
+  const TIMEOUT_MS = 25000; // nunca espera mais que 25s por uma chamada
   const timeoutPromise = new Promise((_, reject) =>
     setTimeout(() => reject(new Error(`Tempo esgotado ao chamar ${fnName}`)), TIMEOUT_MS)
   );
