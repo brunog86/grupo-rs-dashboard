@@ -567,22 +567,22 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 
       <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center;">
         <span class="filter-label">Período:</span>
-        <select class="date-input" id="prodMesAnoDE" style="min-width:160px" onchange="renderProdutos()">
+        <select class="date-input" id="prodMesAnoDE" style="min-width:160px" onchange="renderProdutosLeve()">
           <option value="">Início</option>
         </select>
         <span class="filter-sep">até</span>
-        <select class="date-input" id="prodMesAnoATE" style="min-width:160px" onchange="renderProdutos()">
+        <select class="date-input" id="prodMesAnoATE" style="min-width:160px" onchange="renderProdutosLeve()">
           <option value="">Fim</option>
         </select>
         <button class="apply-btn" onclick="setProdMes()">Mês atual</button>
         <button class="apply-btn" onclick="setProdAno()">Ano atual</button>
         <button class="apply-btn" onclick="setProdTudo()">Tudo</button>
         <span class="filter-label" style="margin-left:8px;">Loja:</span>
-        <select class="date-input" id="prodLojaFilter" style="min-width:160px" onchange="renderProdutos()">
+        <select class="date-input" id="prodLojaFilter" style="min-width:160px" onchange="renderProdutosLeve()">
           <option value="">Todas as lojas</option>
         </select>
         <span class="filter-label" style="margin-left:8px;">Marca:</span>
-        <select class="date-input" id="prodMarcaFilter" style="min-width:180px" onchange="renderProdutosMarca()">
+        <select class="date-input" id="prodMarcaFilter" style="min-width:180px" onchange="renderProdutosMarcaLeve()">
           <option value="">Selecione uma marca...</option>
         </select>
       </div>
@@ -722,11 +722,11 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <span class="filter-sep">até</span>
         <input type="date" class="date-input" id="vendDateEnd">
         <span class="filter-label" style="margin-left:8px">Loja:</span>
-        <select class="date-input" id="vendLojaFilter" style="min-width:160px" onchange="renderVendedores()">
+        <select class="date-input" id="vendLojaFilter" style="min-width:160px" onchange="renderVendedoresLeve()">
           <option value="">Todas as lojas</option>
         </select>
-        <button class="apply-btn" onclick="renderVendedores()">Aplicar</button>
-        <button class="apply-btn" onclick="setVendMes()">Mês atual</button>
+        <button class="apply-btn" onclick="renderVendedoresLeve()">Aplicar</button>
+        <button class="apply-btn" onclick="setVendMesLeve()">Mês atual</button>
       </div>
 
       <div class="metrics-grid" id="vendMetrics"></div>
@@ -2438,6 +2438,100 @@ function renderKart(sorted) {
 }
 // ───────────────────────────────────────────────────────────────────────────
 
+// ── Versão leve de Vendedores — usa RPC em vez de allData completo ────────
+async function renderVendedoresLeve() {
+  const start   = document.getElementById('vendDateStart').value;
+  const end     = document.getElementById('vendDateEnd').value;
+  const lojaFil = document.getElementById('vendLojaFilter').value;
+
+  // Popula filtro de loja (a partir do cadastro, sem precisar de allData)
+  const selLoja = document.getElementById('vendLojaFilter');
+  if (!selLoja.dataset.populated) {
+    const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+    selLoja.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+    selLoja.value = lojaFil;
+    selLoja.dataset.populated = '1';
+  }
+
+  const tV = performance.now();
+  const sorted2 = await buscarRankingVendedores(start, end, lojaFil, 200);
+  console.log(`[perf] renderVendedoresLeve fetch: ${Math.round(performance.now() - tV)}ms`);
+
+  // Converte para o formato [name, {fat, qty, lojas}] usado pelo restante do código
+  const byVend = {};
+  sorted2.forEach(r => {
+    if (!byVend[r.vendedor]) byVend[r.vendedor] = { fat: 0, qty: 0, lojas: new Set() };
+    byVend[r.vendedor].fat += r.fat;
+    byVend[r.vendedor].qty += r.qty;
+    byVend[r.vendedor].lojas.add(r.loja);
+  });
+  const sorted = Object.entries(byVend).sort((a,b) => b[1].fat - a[1].fat);
+
+  const totalFat = sorted.reduce((s,[,d]) => s + d.fat, 0);
+  const totalQty = sorted.reduce((s,[,d]) => s + d.qty, 0);
+  const totalVend = sorted.length;
+
+  makeMetrics(document.getElementById('vendMetrics'), [
+    { label: 'Total vendido', value: fmt(totalFat) },
+    { label: 'Vendedores ativos', value: totalVend },
+    { label: 'Melhor vendedor', value: sorted[0] ? sorted[0][0] : '-' },
+    { label: 'Ticket médio geral', value: totalQty > 0 ? fmt(totalFat / totalQty) : 'R$ 0,00' }
+  ]);
+
+  destroyChart('vendedores'); destroyChart('vendTicket');
+  const top10 = sorted.slice(0, 10);
+  const ctxV = document.getElementById('chartVendedores').getContext('2d');
+  charts['vendedores'] = new Chart(ctxV, {
+    type: 'bar',
+    data: {
+      labels: top10.map(([n]) => n),
+      datasets: [{ data: top10.map(([,d]) => d.fat), backgroundColor: top10.map(([,d]) => { const loja = [...d.lojas][0]; return lojaColorMap[loja] || '#4F7EFF'; }), borderRadius: 6, borderSkipped: false }]
+    },
+    options: { indexAxis: 'y', ...chartDefaults, scales: { x: { ...chartDefaults.scales.x, ticks: { ...chartDefaults.scales.x.ticks, callback: v => fmtK(v) } }, y: { ...chartDefaults.scales.y, ticks: { color: '#8B90A4', font: { family: 'DM Sans', size: 12 } }, grid: { display: false } } } }
+  });
+
+  const ctxVT = document.getElementById('chartVendTicket').getContext('2d');
+  charts['vendTicket'] = new Chart(ctxVT, {
+    type: 'bar',
+    data: {
+      labels: top10.map(([n]) => n),
+      datasets: [{ data: top10.map(([,d]) => d.qty > 0 ? d.fat / d.qty : 0), backgroundColor: top10.map(([,d]) => { const loja = [...d.lojas][0]; return (lojaColorMap[loja] || '#4F7EFF') + 'AA'; }), borderRadius: 6, borderSkipped: false }]
+    },
+    options: { indexAxis: 'y', ...chartDefaults, scales: { x: { ...chartDefaults.scales.x, ticks: { ...chartDefaults.scales.x.ticks, callback: v => fmt(v) } }, y: { ...chartDefaults.scales.y, ticks: { color: '#8B90A4', font: { family: 'DM Sans', size: 12 } }, grid: { display: false } } } }
+  });
+
+  const list = document.getElementById('rankingList');
+  list.innerHTML = '';
+  const maxFat = sorted[0] ? sorted[0][1].fat : 1;
+  sorted.forEach(([name, d], i) => {
+    const loja = [...d.lojas].join(', ');
+    const ticket = d.qty > 0 ? d.fat / d.qty : 0;
+    const cls = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+    const barW = Math.round((d.fat / maxFat) * 100);
+    const div = document.createElement('div');
+    div.className = 'rank-row';
+    div.innerHTML = `
+      <div class="rank-num ${cls}">${i+1}</div>
+      <div class="rank-info"><div class="rank-name">${name}</div><div class="rank-loja">${loja}</div></div>
+      <div class="rank-bar-wrap"><div class="rank-bar" style="width:${barW}%"></div></div>
+      <div style="text-align:right; min-width: 160px">
+        <div class="rank-value">${fmt(d.fat)}</div>
+        <div class="rank-qty">${fmtNum(d.qty)} vendas · ticket ${fmt(ticket)}</div>
+      </div>`;
+    list.appendChild(div);
+  });
+
+  renderKart(sorted.map(([name, d]) => [name, { ...d, lojas: d.lojas }]));
+}
+
+function setVendMesLeve() {
+  const now = new Date();
+  const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+  document.getElementById('vendDateStart').value = `${y}-${m}-01`;
+  document.getElementById('vendDateEnd').value = now.toISOString().split('T')[0];
+  renderVendedoresLeve();
+}
+
 function renderVendedores() {
   const start   = document.getElementById('vendDateStart').value;
   const end     = document.getElementById('vendDateEnd').value;
@@ -3770,6 +3864,39 @@ function toggleRankingMarca() {
   buildRankingRows(document.getElementById('marcaRankingList'), lastSortedMarca, lastSortedMarca[0]?.[1].fat || 1, marcaRankingExpanded ? 0 : 30, false);
 }
 
+// ── Versão leve do painel de produtos por marca — usa RPC ──────────────────
+async function renderProdutosMarcaLeve() {
+  const marca = document.getElementById('prodMarcaFilter').value;
+  const sec   = document.getElementById('prodPorMarcaSection');
+  if (!marca) { sec.style.display = 'none'; return; }
+
+  const deM    = document.getElementById('prodMesAnoDE').value;
+  const ateM   = document.getElementById('prodMesAnoATE').value;
+  const lojaFil = document.getElementById('prodLojaFilter').value;
+  let dataInicio = '2000-01-01', dataFim = '2099-12-31';
+  if (deM) dataInicio = `${deM}-01`;
+  if (ateM) {
+    const [y, m] = ateM.split('-').map(Number);
+    dataFim = `${ateM}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
+  }
+
+  const produtos = await buscarRankingProdutos(dataInicio, dataFim, lojaFil, marca, 500);
+  if (!produtos.length) { sec.style.display = 'none'; return; }
+
+  const totalFat = produtos.reduce((s,p) => s + p.fat, 0);
+  const totalQty = produtos.reduce((s,p) => s + p.qty, 0);
+
+  document.getElementById('prodPorMarcaTitulo').textContent = `${marca}`;
+  document.getElementById('prodPorMarcaStats').textContent =
+    `${fmtNum(totalQty)} unidades vendidas · ${fmt(totalFat)} em faturamento`;
+  sec.style.display = 'block';
+  sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const sorted = produtos.map(p => [p.produto, { fat: p.fat, qty: p.qty, marca: p.marca, barras: p.barras }]);
+  const maxFat = sorted[0]?.[1].fat || 1;
+  buildRankingRows(document.getElementById('prodPorMarcaList'), sorted, maxFat, 0, true);
+}
+
 function renderProdutosMarca() {
   const marca = document.getElementById('prodMarcaFilter').value;
   const sec   = document.getElementById('prodPorMarcaSection');
@@ -3802,6 +3929,132 @@ function renderProdutosMarca() {
   const sorted = Object.entries(byProd).sort((a,b) => b[1].fat - a[1].fat);
   const maxFat = sorted[0]?.[1].fat || 1;
   buildRankingRows(document.getElementById('prodPorMarcaList'), sorted, maxFat, 0, true);
+}
+
+// ── Versão leve de Produtos & Marcas — usa RPC em vez de prodData completo ─
+async function renderProdutosLeve() {
+  const deM    = document.getElementById('prodMesAnoDE').value;
+  const ateM   = document.getElementById('prodMesAnoATE').value;
+  const lojaFil = document.getElementById('prodLojaFilter').value;
+  const marcaFil = document.getElementById('prodMarcaFilter')?.value || null;
+
+  // Popula filtro de loja a partir do cadastro (sem precisar de prodData)
+  const lojaSel = document.getElementById('prodLojaFilter');
+  if (!lojaSel.dataset.populated) {
+    const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+    lojaSel.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+    lojaSel.value = lojaFil;
+    lojaSel.dataset.populated = '1';
+  }
+
+  // Converte seletor de mês (YYYY-MM) em datas de início/fim
+  let dataInicio = '2000-01-01', dataFim = '2099-12-31';
+  if (deM) dataInicio = `${deM}-01`;
+  if (ateM) {
+    const [y, m] = ateM.split('-').map(Number);
+    const ultimoDia = new Date(y, m, 0).getDate();
+    dataFim = `${ateM}-${String(ultimoDia).padStart(2,'0')}`;
+  }
+
+  const noData  = document.getElementById('prodNoData');
+  const content = document.getElementById('prodContent');
+
+  const tP = performance.now();
+  const [produtos, marcas] = await Promise.all([
+    buscarRankingProdutos(dataInicio, dataFim, lojaFil, marcaFil, 500),
+    buscarRankingMarcas(dataInicio, dataFim, lojaFil, 200),
+  ]);
+  console.log(`[perf] renderProdutosLeve fetch: ${Math.round(performance.now() - tP)}ms`);
+
+  if (!produtos.length && !marcas.length) { noData.style.display = 'block'; content.style.display = 'none'; return; }
+  noData.style.display = 'none';
+  content.style.display = 'block';
+
+  // Converte para o formato [name, {fat, qty, marca, barras}] usado pelo restante do código
+  lastSortedProd  = produtos.map(p => [p.produto, { fat: p.fat, qty: p.qty, marca: p.marca, barras: p.barras }]);
+  lastSortedMarca = marcas.map(m => [m.marca, { fat: m.fat, qty: m.qty }]);
+  prodRankingExpanded  = false;
+  marcaRankingExpanded = false;
+
+  const totalFat = lastSortedProd.reduce((s,[,d]) => s + d.fat, 0);
+  const totalQty = lastSortedProd.reduce((s,[,d]) => s + d.qty, 0);
+
+  makeMetrics(document.getElementById('prodMetrics'), [
+    { label: 'Faturamento total', value: fmt(totalFat) },
+    { label: 'Itens vendidos', value: fmtNum(totalQty) },
+    { label: 'Produtos distintos', value: lastSortedProd.length },
+    { label: 'Marcas distintas', value: lastSortedMarca.length }
+  ]);
+
+  destroyChart('prodFat'); destroyChart('prodQty'); destroyChart('marcaFat'); destroyChart('marcaQty');
+
+  const top15Fat = lastSortedProd.slice(0,15);
+  const top15Qty = [...lastSortedProd].sort((a,b) => b[1].qty - a[1].qty).slice(0,15);
+  const marcaColors = lastSortedMarca.map((_,i) => LOJA_COLORS[i % LOJA_COLORS.length]);
+
+  const ctxPF = document.getElementById('chartProdFat').getContext('2d');
+  charts['prodFat'] = new Chart(ctxPF, {
+    type: 'bar',
+    data: { labels: top15Fat.map(([n]) => n.length>32?n.substring(0,30)+'…':n), datasets: [{ data: top15Fat.map(([,d]) => d.fat), backgroundColor: '#4F7EFF', borderRadius: 5, borderSkipped: false }] },
+    options: { indexAxis:'y', ...chartDefaults, scales: { x: { ...chartDefaults.scales.x, ticks: { ...chartDefaults.scales.x.ticks, callback: v => fmtK(v) } }, y: { ticks: { color:'#8B90A4', font:{ family:'DM Sans', size:11 } }, grid:{ display:false } } } }
+  });
+
+  const ctxPQ = document.getElementById('chartProdQty').getContext('2d');
+  charts['prodQty'] = new Chart(ctxPQ, {
+    type: 'bar',
+    data: { labels: top15Qty.map(([n]) => n.length>32?n.substring(0,30)+'…':n), datasets: [{ data: top15Qty.map(([,d]) => d.qty), backgroundColor: '#2DD4A0', borderRadius: 5, borderSkipped: false }] },
+    options: { indexAxis:'y', ...chartDefaults, scales: { x: { ...chartDefaults.scales.x, ticks: { ...chartDefaults.scales.x.ticks, callback: v => fmtNum(v) } }, y: { ticks: { color:'#8B90A4', font:{ family:'DM Sans', size:11 } }, grid:{ display:false } } } }
+  });
+
+  const ctxMF = document.getElementById('chartMarcaFat').getContext('2d');
+  charts['marcaFat'] = new Chart(ctxMF, {
+    type: 'doughnut',
+    data: { labels: lastSortedMarca.map(([n]) => n), datasets: [{ data: lastSortedMarca.map(([,d]) => d.fat), backgroundColor: marcaColors, borderWidth:0, hoverOffset:8 }] },
+    options: { plugins: { legend: { display:true, position:'bottom', labels:{ color:'#8B90A4', font:{ family:'DM Sans', size:11 }, padding:10, boxWidth:10 } }, tooltip: chartDefaults.plugins.tooltip }, cutout:'60%' }
+  });
+
+  const ctxMQ = document.getElementById('chartMarcaQty').getContext('2d');
+  charts['marcaQty'] = new Chart(ctxMQ, {
+    type: 'doughnut',
+    data: { labels: lastSortedMarca.map(([n]) => n), datasets: [{ data: lastSortedMarca.map(([,d]) => d.qty), backgroundColor: marcaColors.map(c=>c+'BB'), borderWidth:0, hoverOffset:8 }] },
+    options: { plugins: { legend: { display:true, position:'bottom', labels:{ color:'#8B90A4', font:{ family:'DM Sans', size:11 }, padding:10, boxWidth:10 } }, tooltip: chartDefaults.plugins.tooltip }, cutout:'60%' }
+  });
+
+  const btnP = document.getElementById('btnVerTodosProd');
+  btnP.style.display = lastSortedProd.length > 30 ? 'inline-block' : 'none';
+  btnP.textContent = 'Ver todos';
+  buildRankingRows(document.getElementById('prodRankingList'), lastSortedProd, lastSortedProd[0]?.[1].fat||1, 30, true);
+
+  const lastSortedProdQty = [...lastSortedProd].sort((a,b) => b[1].qty - a[1].qty);
+  const btnPQ = document.getElementById('btnVerTodosProdQty');
+  btnPQ.style.display = lastSortedProdQty.length > 30 ? 'inline-block' : 'none';
+  btnPQ.textContent = 'Ver todos';
+  buildRankingRows(document.getElementById('prodRankingQtyList'), lastSortedProdQty, lastSortedProdQty[0]?.[1].qty||1, 30, true, 'qty');
+
+  const btnM = document.getElementById('btnVerTodosMarca');
+  btnM.style.display = lastSortedMarca.length > 30 ? 'inline-block' : 'none';
+  btnM.textContent = 'Ver todos';
+  buildRankingRows(document.getElementById('marcaRankingList'), lastSortedMarca, lastSortedMarca[0]?.[1].fat||1, 30, false);
+
+  const marcaSel = document.getElementById('prodMarcaFilter');
+  const currentMarca = marcaSel.value;
+  marcaSel.innerHTML = '<option value="">Selecione uma marca...</option>' + lastSortedMarca.map(([n]) => `<option value="${n}" ${n===currentMarca?'selected':''}>${n}</option>`).join('');
+  if (currentMarca) renderProdutosMarcaLeve();
+  else document.getElementById('prodPorMarcaSection').style.display = 'none';
+}
+
+async function populateProdMesSelectoresLeve() {
+  if (!mesesDisponiveisCache.length) {
+    const mesesDisp = await callRpc('fn_meses_disponiveis', {}, false);
+    mesesDisponiveisCache = mesesDisp.map(r => r.mes).filter(Boolean).sort();
+  }
+  const mesesUnicos = [...new Set(mesesDisponiveisCache.map(m => m.substring(0,7)))].sort();
+  const mesLabel = ym => { const [y,m] = ym.split('-'); return new Date(+y,+m-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'}); };
+  const selDE  = document.getElementById('prodMesAnoDE');
+  const selATE = document.getElementById('prodMesAnoATE');
+  const opts = '<option value="">Selecione...</option>' + mesesUnicos.map(m => `<option value="${m}">${mesLabel(m)}</option>`).join('');
+  if (selDE && !selDE.dataset.populated)  { selDE.innerHTML  = opts; selDE.dataset.populated  = '1'; }
+  if (selATE && !selATE.dataset.populated) { selATE.innerHTML = opts; selATE.dataset.populated = '1'; }
 }
 
 function renderProdutos() {
@@ -3961,7 +4214,7 @@ function setProdAno() {
 function setProdTudo() {
   document.getElementById('prodMesAnoDE').value  = '';
   document.getElementById('prodMesAnoATE').value = '';
-  renderProdutos();
+  renderProdutosLeve();
 }
 
 async function exportFornecedorPDF() {
@@ -5632,8 +5885,8 @@ function switchTab(name, btn) {
   document.getElementById('tab-' + name).classList.add('active');
   if (name === 'diario')      renderDiarioLeve();
   if (name === 'mensal')      renderMensalLeve();
-  if (name === 'vendedores')  renderVendedores();
-  if (name === 'produtos')    renderProdutos();
+  if (name === 'vendedores')  renderVendedoresLeve();
+  if (name === 'produtos')    { populateProdMesSelectoresLeve(); renderProdutosLeve(); }
   if (name === 'financeiro')  renderFinanceiro();
   if (name === 'pagamentos')  renderPagamentos();
   if (name === 'analise')     renderAnalise();
