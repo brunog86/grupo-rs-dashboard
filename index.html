@@ -1199,15 +1199,19 @@ async function iniciarAposLogin() {
     if (btnCarregar) btnCarregar.style.display = 'none';
   }
 
-  await carregarTodasLojas();
-
-  // ── Carregamento leve: só confirma se existem dados, sem baixar tudo ──────
+  // ── Carregamento leve: roda em PARALELO tudo que não depende um do outro ──
   document.getElementById('dataLoadingScreen').style.display = 'flex';
   atualizarProgressoCarregamento(30, 'Verificando dados disponíveis...');
 
-  const { count: totalVendas } = await sb.from('vendas').select('id', { count: 'exact', head: true });
-  const mesesDisp = await buscarMesesDisponiveis();
-  mesesDisponiveisCache = mesesDisp;
+  const t0 = performance.now();
+  const [lojasResult, countResult, mesesResult] = await Promise.all([
+    carregarTodasLojas(),
+    sb.from('vendas').select('id', { count: 'exact', head: true }),
+    buscarMesesDisponiveis(),
+  ]);
+  const totalVendas = countResult.count;
+  mesesDisponiveisCache = mesesResult;
+  console.log(`[perf] Carregamento inicial: ${Math.round(performance.now() - t0)}ms`);
 
   atualizarProgressoCarregamento(100, 'Pronto!');
   document.getElementById('dataLoadingScreen').style.display = 'none';
@@ -1218,13 +1222,15 @@ async function iniciarAposLogin() {
     document.getElementById('uploadZone').style.display = 'none';
     document.getElementById('dashboardArea').style.display = 'block';
     showToast('Conectado ao servidor.', 'success');
+    const t1 = performance.now();
     await initDashboardLeve();
+    console.log(`[perf] initDashboardLeve: ${Math.round(performance.now() - t1)}ms`);
   } else {
     // Sem dados no servidor ainda — mostra a tela de upload normalmente
     document.getElementById('uploadZone').style.display = 'block';
   }
 
-  if (isAdmin()) carregarListaUsuarios();
+  if (isAdmin()) carregarListaUsuarios(); // não bloqueia a renderização do dashboard
 }
 
 // ── Verifica sessão existente ao carregar a página ──────────────────────────
@@ -1627,7 +1633,13 @@ async function renderDiarioLeve() {
   const date = document.getElementById('dateFilter').value || new Date().toISOString().split('T')[0];
   const lojaFil = document.getElementById('diarioLojaFilter')?.value || '';
 
-  const resumo = await buscarResumoFaturamento(date, date, lojaFil);
+  const tD = performance.now();
+  const [resumo, porHora] = await Promise.all([
+    buscarResumoFaturamento(date, date, lojaFil),
+    buscarVendasPorHora(date, lojaFil),
+  ]);
+  console.log(`[perf] renderDiarioLeve fetch: ${Math.round(performance.now() - tD)}ms`);
+
   const comDados = resumo.filter(r => r.qty > 0);
 
   const totalFat = comDados.reduce((s,r) => s + r.fat, 0);
@@ -1664,8 +1676,7 @@ async function renderDiarioLeve() {
     options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmt(v) } } } }
   });
 
-  // Gráfico por hora — busca só o dia selecionado via RPC (leve)
-  const porHora = await buscarVendasPorHora(date, lojaFil);
+  // Gráfico por hora — já buscado em paralelo no início da função
   const horaLabels = [];
   for (let h = 8; h <= 21; h++) horaLabels.push(String(h).padStart(2,'0') + 'h');
   const horaByLoja = {};
@@ -1823,7 +1834,14 @@ async function renderMensalLeve() {
   const ultimoDiaNum = new Date(y, m, 0).getDate();
   const ultimoDia = `${activeMonth}-${String(ultimoDiaNum).padStart(2,'0')}`;
 
-  const resumo = await buscarResumoFaturamento(primeiroDia, ultimoDia, lojaFil);
+  const tM = performance.now();
+  const [resumo, diario, porHora] = await Promise.all([
+    buscarResumoFaturamento(primeiroDia, ultimoDia, lojaFil),
+    buscarFaturamentoDiario(primeiroDia, ultimoDia, lojaFil),
+    buscarVendasPorHoraPeriodo(primeiroDia, ultimoDia, lojaFil),
+  ]);
+  console.log(`[perf] renderMensalLeve fetch: ${Math.round(performance.now() - tM)}ms`);
+
   const comDados = resumo.filter(r => r.qty > 0);
 
   const totalFat = comDados.reduce((s,r) => s + r.fat, 0);
@@ -1831,7 +1849,6 @@ async function renderMensalLeve() {
   const ticket = totalQty > 0 ? totalFat / totalQty : 0;
 
   // Série diária para calcular média/tendência e o gráfico de evolução
-  const diario = await buscarFaturamentoDiario(primeiroDia, ultimoDia, lojaFil);
   const diasMap = {};
   diario.forEach(r => { diasMap[r.data] = (diasMap[r.data] || 0) + r.valor; });
   const diasComFat = Object.keys(diasMap).filter(d => diasMap[d] > 0);
@@ -1919,8 +1936,7 @@ async function renderMensalLeve() {
     }
   });
 
-  // Faturamento por hora do dia, agregado no mês
-  const porHora = await buscarVendasPorHoraPeriodo(primeiroDia, ultimoDia, lojaFil);
+  // Faturamento por hora do dia, agregado no mês — já buscado em paralelo acima
   const horaLabelsM = [];
   for (let h = 8; h <= 21; h++) horaLabelsM.push(String(h).padStart(2,'0') + 'h');
   const horaByLojaM = {};
