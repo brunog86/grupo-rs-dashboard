@@ -807,7 +807,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 
             <div>
               <div class="filter-label" style="margin-bottom:6px">Situação</div>
-              <select class="date-input" id="finStatusFilter" style="width:100%" onchange="renderFinanceiro()">
+              <select class="date-input" id="finStatusFilter" style="width:100%" onchange="renderFinanceiroLeve()">
                 <option value="">Todas</option>
                 <option value="ABERTO">Em aberto</option>
                 <option value="QUITADO">Quitado / Recebido</option>
@@ -816,7 +816,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 
             <div>
               <div class="filter-label" style="margin-bottom:6px">Fornecedor / Histórico</div>
-              <input type="text" id="finFornecedorFilter" placeholder="Buscar fornecedor..." oninput="renderFinanceiro()" style="background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text);font-size:13px;font-family:'Plus Jakarta Sans',sans-serif;width:100%;outline:none;" onfocus="this.style.borderColor='var(--blue2)'" onblur="this.style.borderColor='var(--border2)'">
+              <input type="text" id="finFornecedorFilter" placeholder="Buscar fornecedor..." oninput="renderFinanceiroLeve()" style="background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text);font-size:13px;font-family:'Plus Jakarta Sans',sans-serif;width:100%;outline:none;" onfocus="this.style.borderColor='var(--blue2)'" onblur="this.style.borderColor='var(--border2)'">
             </div>
 
             <div style="display:flex;gap:8px;align-items:flex-end;padding-bottom:1px;">
@@ -859,14 +859,14 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
           <div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
               <div class="section-title" style="margin:0;border-left-color:var(--red)">Detalhamento — Contas a Pagar</div>
-              <select class="date-input" id="finPagarLojaFilter" style="font-size:12px;padding:5px 10px" onchange="renderFinanceiro()"><option value="">Todas as lojas</option></select>
+              <select class="date-input" id="finPagarLojaFilter" style="font-size:12px;padding:5px 10px" onchange="renderFinanceiroLeve()"><option value="">Todas as lojas</option></select>
             </div>
             <div id="finPagarList"></div>
           </div>
           <div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
               <div class="section-title" style="margin:0;border-left-color:var(--green)">Detalhamento — Contas a Receber</div>
-              <select class="date-input" id="finReceberLojaFilter" style="font-size:12px;padding:5px 10px" onchange="renderFinanceiro()"><option value="">Todas as lojas</option></select>
+              <select class="date-input" id="finReceberLojaFilter" style="font-size:12px;padding:5px 10px" onchange="renderFinanceiroLeve()"><option value="">Todas as lojas</option></select>
             </div>
             <div id="finReceberList"></div>
           </div>
@@ -892,10 +892,10 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <span class="filter-sep">até</span>
         <input type="date" class="date-input" id="pgtoAteFilter">
         <span class="filter-label" style="margin-left:8px">Loja:</span>
-        <select class="date-input" id="pgtoLojaFilter" style="min-width:160px" onchange="renderPagamentos()">
+        <select class="date-input" id="pgtoLojaFilter" style="min-width:160px" onchange="renderPagamentosLeve()">
           <option value="">Todas as lojas</option>
         </select>
-        <button class="apply-btn" onclick="renderPagamentos()">Aplicar</button>
+        <button class="apply-btn" onclick="renderPagamentosLeve()">Aplicar</button>
         <button class="apply-btn" onclick="setPgtoMesAtual()" style="border-color:var(--orange);color:var(--orange)">Mês atual</button>
       </div>
 
@@ -3433,6 +3433,22 @@ async function buscarVendasPorHoraPeriodo(dataInicio, dataFim, lojaNome) {
   return rows.map(r => ({ hora: r.hora, loja: r.loja_nome, valor: parseFloat(r.faturamento) }));
 }
 
+// ── Evolução diária de pagamentos por forma ─────────────────────────────────
+async function buscarPagamentosDiario(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_pagamentos_diario', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({ data: r.dia, forma: r.forma, valor: parseFloat(r.faturamento) }));
+}
+
+// ── Resumo de pagamentos por loja ───────────────────────────────────────────
+async function buscarResumoPagamentosPorLoja(dataInicio, dataFim) {
+  const rows = await callRpc('fn_resumo_pagamentos_por_loja', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim
+  }, false);
+  return rows.map(r => ({ loja: r.loja_nome, forma: r.forma, fat: parseFloat(r.faturamento), qty: parseInt(r.qtd_vendas) }));
+}
+
 // ── Lista de meses disponíveis (para popular seletores sem baixar tudo) ────
 async function buscarMesesDisponiveis() {
   const rows = await callRpc('fn_meses_disponiveis', {});
@@ -4688,12 +4704,12 @@ function parseFinanceiro(arrayBuffer, lojaName, tipo) {
 }
 
 function populateFinMesFilter() {
-  const allFin  = [...finPagarData, ...finReceberData];
-  const meses   = [...new Set(allFin.map(r => (r.dtVenc || r.emissao || '').substring(0,7)).filter(Boolean))].sort();
+  const sel = document.getElementById('finMesFilter');
+  if (sel.dataset.populated) return;
+  const meses = [...new Set(mesesDisponiveisCache.map(m => m.substring(0,7)))].sort();
   const mesLabel = ym => { const [y,m] = ym.split('-'); return new Date(+y,+m-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'}); };
-  document.getElementById('finMesFilter').innerHTML =
-    '<option value="">Todos os períodos</option>' +
-    meses.map(m => `<option value="${m}">${mesLabel(m)}</option>`).join('');
+  sel.innerHTML = '<option value="">Todos os períodos</option>' + meses.map(m => `<option value="${m}">${mesLabel(m)}</option>`).join('');
+  sel.dataset.populated = '1';
 }
 
 function onFinMesChange() {
@@ -4709,7 +4725,7 @@ function onFinMesChange() {
     document.getElementById('finDeFilter').value  = '';
     document.getElementById('finAteFilter').value = '';
   }
-  renderFinanceiro();
+  renderFinanceiroLeve();
 }
 
 function onFinDiaChange() {
@@ -4719,7 +4735,7 @@ function onFinDiaChange() {
     document.getElementById('finDeFilter').value = '';
     document.getElementById('finAteFilter').value = '';
   }
-  renderFinanceiro();
+  renderFinanceiroLeve();
 }
 
 function onFinPeriodoChange() {
@@ -4728,7 +4744,7 @@ function onFinPeriodoChange() {
     document.getElementById('finMesFilter').value = '';
     document.getElementById('finDiaFilter').value = '';
   }
-  renderFinanceiro();
+  renderFinanceiroLeve();
 }
 
 function limparFiltrosFinanceiro() {
@@ -4738,7 +4754,7 @@ function limparFiltrosFinanceiro() {
   document.getElementById('finAteFilter').value = '';
   document.getElementById('finStatusFilter').value = '';
   document.getElementById('finFornecedorFilter').value = '';
-  renderFinanceiro();
+  renderFinanceiroLeve();
 }
 
 function setFinHoje() {
@@ -4747,7 +4763,7 @@ function setFinHoje() {
   document.getElementById('finDeFilter').value = '';
   document.getElementById('finAteFilter').value = '';
   document.getElementById('finDiaFilter').value = hoje;
-  renderFinanceiro();
+  renderFinanceiroLeve();
 }
 
 function setFinMesAtual() {
@@ -4759,7 +4775,243 @@ function setFinMesAtual() {
   document.getElementById('finDiaFilter').value  = '';
   document.getElementById('finDeFilter').value   = `${y}-${m}-01`;
   document.getElementById('finAteFilter').value  = `${y}-${m}-${String(lastDay).padStart(2,'0')}`;
-  renderFinanceiro();
+  renderFinanceiroLeve();
+}
+
+// ── Versão leve do Financeiro — usa RPC em vez de finPagarData/finReceberData ─
+async function renderFinanceiroLeve() {
+  const pagarLojaFil   = document.getElementById('finPagarLojaFilter').value;
+  const receberLojaFil = document.getElementById('finReceberLojaFilter').value;
+  const mesFil         = document.getElementById('finMesFilter').value;
+  const diaFil         = document.getElementById('finDiaFilter').value;
+  const deFil          = document.getElementById('finDeFilter').value;
+  const ateFil         = document.getElementById('finAteFilter').value;
+  const statusFil      = document.getElementById('finStatusFilter').value;
+  const fornFil        = document.getElementById('finFornecedorFilter').value.trim();
+
+  // Resolve período efetivo (dia > mês > de/até), igual à lógica antiga
+  let dataIni = null, dataFimEf = null;
+  if (diaFil)      { dataIni = diaFil; dataFimEf = diaFil; }
+  else if (mesFil)  {
+    const [y, m] = mesFil.split('-').map(Number);
+    dataIni = `${mesFil}-01`;
+    dataFimEf = `${mesFil}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
+  } else if (deFil || ateFil) {
+    dataIni = deFil || null;
+    dataFimEf = ateFil || null;
+  }
+
+  const tF = performance.now();
+  const [pagar, receber] = await Promise.all([
+    buscarListaFinanceiro('pagar',   { loja: pagarLojaFil,   de: dataIni, ate: dataFimEf, situacao: statusFil, fornecedor: fornFil, limite: 2000 }),
+    buscarListaFinanceiro('receber', { loja: receberLojaFil, de: dataIni, ate: dataFimEf, situacao: statusFil, fornecedor: fornFil, limite: 2000 }),
+  ]);
+  console.log(`[perf] renderFinanceiroLeve fetch: ${Math.round(performance.now() - tF)}ms`);
+
+  document.getElementById('finNoData').style.display  = (!pagar.length && !receber.length) ? 'block' : 'none';
+  document.getElementById('finContent').style.display = (pagar.length || receber.length)   ? 'block' : 'none';
+  if (!pagar.length && !receber.length) return;
+
+  const hoje = new Date().toISOString().split('T')[0];
+  const pagarVencido  = pagar.filter(r => r.situacao === 'ABERTO' && r.dtVenc && r.dtVenc < hoje).reduce((s,r) => s + r.valorDoc, 0);
+  const pagarAVencer  = pagar.filter(r => r.situacao === 'ABERTO' && (!r.dtVenc || r.dtVenc >= hoje)).reduce((s,r) => s + r.valorDoc, 0);
+  const totalPago     = pagar.filter(r => r.situacao !== 'ABERTO').reduce((s,r) => s + r.valorQuit, 0);
+  const totalAbertoRec= receber.filter(r => r.situacao === 'ABERTO').reduce((s,r) => s + r.valorDoc, 0);
+  const totalRecebido = receber.filter(r => r.situacao !== 'ABERTO').reduce((s,r) => s + r.valorQuit, 0);
+  const saldo         = totalAbertoRec - (pagarVencido + pagarAVencer);
+
+  makeMetrics(document.getElementById('finMetrics'), [
+    { label: '⚠ A pagar — vencido',   value: fmt(pagarVencido),  cls: 'down' },
+    { label: '📅 A pagar — a vencer',  value: fmt(pagarAVencer),  cls: 'neutral' },
+    { label: 'Total pago',             value: fmt(totalPago),     cls: 'neutral' },
+    { label: 'A receber (em aberto)',  value: fmt(totalAbertoRec),cls: 'up' },
+    { label: 'Total recebido',         value: fmt(totalRecebido), cls: 'neutral' },
+    { label: 'Saldo projetado',        value: fmt(saldo),         cls: saldo >= 0 ? 'up' : 'down' },
+  ]);
+
+  // Popula filtros de loja a partir do cadastro
+  const selPagar   = document.getElementById('finPagarLojaFilter');
+  const selReceber = document.getElementById('finReceberLojaFilter');
+  if (!selPagar.dataset.populated) {
+    const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+    selPagar.innerHTML   = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+    selReceber.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+    selPagar.value = pagarLojaFil; selReceber.value = receberLojaFil;
+    selPagar.dataset.populated = '1'; selReceber.dataset.populated = '1';
+  }
+
+  buildEmpresaGridGeneric(pagar,   'finPagarEmpresaGrid',   'var(--red)',   'finPagarLojaFilter');
+  buildEmpresaGridGeneric(receber, 'finReceberEmpresaGrid', 'var(--green)', 'finReceberLojaFilter');
+
+  buildFinListGeneric(pagar,   'finPagarList',   'var(--amber)', hoje);
+  buildFinListGeneric(receber, 'finReceberList', 'var(--green)', hoje);
+
+  destroyChart('finPagar'); destroyChart('finReceber');
+
+  const byCatPagar = {};
+  pagar.filter(r => r.situacao === 'ABERTO').forEach(r => { byCatPagar[r.categoria||'Outros'] = (byCatPagar[r.categoria||'Outros'] || 0) + r.valorDoc; });
+  const catPagarSort = Object.entries(byCatPagar).sort((a,b) => b[1]-a[1]).slice(0,8);
+
+  const byCatRec = {};
+  receber.filter(r => r.situacao === 'ABERTO').forEach(r => { byCatRec[r.categoria||'Outros'] = (byCatRec[r.categoria||'Outros'] || 0) + r.valorDoc; });
+  const catRecSort = Object.entries(byCatRec).sort((a,b) => b[1]-a[1]).slice(0,8);
+
+  if (catPagarSort.length) {
+    const ctxP = document.getElementById('chartFinPagar').getContext('2d');
+    charts['finPagar'] = new Chart(ctxP, {
+      type: 'bar',
+      data: { labels: catPagarSort.map(([k]) => k.length>22?k.substring(0,20)+'…':k), datasets: [{ data: catPagarSort.map(([,v]) => v), backgroundColor: 'rgba(244,63,94,0.75)', borderRadius: 5, borderSkipped: false }] },
+      options: { indexAxis: 'y', ...chartDefaults, scales: { x: { ...chartDefaults.scales.x, ticks: { ...chartDefaults.scales.x.ticks, callback: v => fmtK(v) } }, y: { ticks: { color: '#9BA5C0', font: { family: 'Plus Jakarta Sans', size: 11 } }, grid: { display: false } } } }
+    });
+  }
+  if (catRecSort.length) {
+    const ctxR = document.getElementById('chartFinReceber').getContext('2d');
+    charts['finReceber'] = new Chart(ctxR, {
+      type: 'bar',
+      data: { labels: catRecSort.map(([k]) => k.length>22?k.substring(0,20)+'…':k), datasets: [{ data: catRecSort.map(([,v]) => v), backgroundColor: 'rgba(34,211,165,0.75)', borderRadius: 5, borderSkipped: false }] },
+      options: { indexAxis: 'y', ...chartDefaults, scales: { x: { ...chartDefaults.scales.x, ticks: { ...chartDefaults.scales.x.ticks, callback: v => fmtK(v) } }, y: { ticks: { color: '#9BA5C0', font: { family: 'Plus Jakarta Sans', size: 11 } }, grid: { display: false } } } }
+    });
+  }
+}
+
+// Versões genéricas das funções de montagem visual (extraídas para reuso fora de renderFinanceiro)
+function buildEmpresaGridGeneric(data, gridId, corBorda, lojaFilterId) {
+  const grid = document.getElementById(gridId);
+  grid.innerHTML = '';
+  const hoje = new Date().toISOString().split('T')[0];
+  const byLoja = {};
+  data.forEach(r => {
+    if (!byLoja[r.loja]) byLoja[r.loja] = { total: 0, vencido: 0, aVencer: 0, quitado: 0 };
+    byLoja[r.loja].total += r.valorDoc;
+    if (r.situacao === 'ABERTO') {
+      if (r.dtVenc && r.dtVenc < hoje) byLoja[r.loja].vencido += r.valorDoc;
+      else byLoja[r.loja].aVencer += r.valorDoc;
+    } else {
+      byLoja[r.loja].quitado += r.valorDoc;
+    }
+  });
+  const lojas = Object.keys(byLoja).sort((a,b) => (byLoja[b].vencido + byLoja[b].aVencer) - (byLoja[a].vencido + byLoja[a].aVencer));
+  lojas.forEach(loja => {
+    const d     = byLoja[loja];
+    const color = lojaColorMap[loja] || corBorda;
+    const row   = document.createElement('div');
+    row.style.cssText = `
+      background:var(--bg3); border:1px solid var(--border);
+      border-left:3px solid ${color}; border-radius:var(--radius);
+      padding:14px 18px; display:grid;
+      grid-template-columns:160px 1fr 1fr 1fr 1fr;
+      align-items:center; gap:12px; margin-bottom:10px;
+      transition:all 0.2s; cursor:pointer;
+    `;
+    row.onmouseenter = () => { row.style.background = 'var(--bg4)'; };
+    row.onmouseleave = () => { row.style.background = 'var(--bg3)'; };
+    row.onclick = () => {
+      const sel = document.getElementById(lojaFilterId);
+      sel.value = sel.value === loja ? '' : loja;
+      renderFinanceiroLeve();
+    };
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:13px">
+        <div style="width:10px;height:10px;border-radius:3px;background:${color};flex-shrink:0"></div>
+        ${loja}
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--red);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:4px">⚠ Vencido</div>
+        <div style="font-size:15px;font-weight:700;color:var(--red)">${fmt(d.vencido)}</div>
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--amber);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:4px">📅 A vencer</div>
+        <div style="font-size:15px;font-weight:700;color:var(--amber)">${fmt(d.aVencer)}</div>
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:4px">Quitado</div>
+        <div style="font-size:15px;font-weight:700;color:var(--text2)">${fmt(d.quitado)}</div>
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:4px">Total</div>
+        <div style="font-size:15px;font-weight:700;color:var(--text)">${fmt(d.total)}</div>
+      </div>`;
+    grid.appendChild(row);
+  });
+  if (!lojas.length) grid.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px 0">Nenhum dado.</div>';
+}
+
+function buildFinListGeneric(data, listId, corAberto, hoje) {
+  const listEl = document.getElementById(listId);
+  listEl.innerHTML = '';
+  if (!data.length) {
+    listEl.innerHTML = '<div style="color:var(--text2);padding:12px 0;font-size:13px">Nenhum lançamento encontrado.</div>';
+    return;
+  }
+  const byDate = {};
+  data.forEach(r => {
+    const key = r.dtVenc || r.emissao || '0000-00-00';
+    if (!byDate[key]) byDate[key] = [];
+    byDate[key].push(r);
+  });
+  const datesSorted = Object.keys(byDate).sort();
+
+  datesSorted.forEach(dateKey => {
+    const items    = byDate[dateKey];
+    const totalDia = items.reduce((s,r) => s + r.valorDoc, 0);
+    const vencStr  = dateKey !== '0000-00-00' ? dateKey.split('-').reverse().join('/') : 'Sem vencimento';
+    const algumAberto  = items.some(r => r.situacao === 'ABERTO');
+    const algumVencido = algumAberto && dateKey < hoje && dateKey !== '0000-00-00';
+    const corData      = algumVencido ? 'var(--red)' : algumAberto ? corAberto : 'var(--text2)';
+
+    const dateHeader = document.createElement('div');
+    dateHeader.style.cssText = `
+      display:flex; align-items:center; justify-content:space-between;
+      padding:10px 16px; margin-top:14px; margin-bottom:4px;
+      background:var(--bg3); border-radius:var(--radius-sm);
+      border-left:4px solid ${corData};
+    `;
+    dateHeader.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px">
+        ${algumVencido ? '<span style="font-size:13px">⚠</span>' : ''}
+        <span style="font-size:14px;font-weight:800;color:${corData};letter-spacing:-0.01em">${vencStr}</span>
+      </div>
+      <span style="font-size:14px;font-weight:800;color:${corData}">${fmt(totalDia)}</span>`;
+    listEl.appendChild(dateHeader);
+
+    const itemsWrap = document.createElement('div');
+    itemsWrap.style.cssText = `margin-left:16px;`;
+    const itemsCard = document.createElement('div');
+    itemsCard.style.cssText = `background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;`;
+
+    items.forEach((r, i) => {
+      const isAberto = r.situacao === 'ABERTO';
+      const vencido  = isAberto && dateKey < hoje && dateKey !== '0000-00-00';
+      const cor      = vencido ? 'var(--red)' : isAberto ? corAberto : 'var(--text2)';
+      const label    = vencido ? 'Vencido' : isAberto ? 'Em aberto' : 'Quitado';
+      const row = document.createElement('div');
+      row.style.cssText = `
+        display:flex; align-items:center; justify-content:space-between;
+        padding:9px 14px;
+        ${i < items.length-1 ? 'border-bottom:1px solid var(--border);' : ''}
+        transition:background 0.15s;
+      `;
+      row.onmouseenter = () => row.style.background = 'var(--bg4)';
+      row.onmouseleave = () => row.style.background = '';
+      row.innerHTML = `
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            ${r.fornecedor || r.historico || '—'}
+          </div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">
+            ${r.categoria || ''}${r.historico && r.fornecedor ? ' · '+r.historico : ''}${r.loja ? ' · '+r.loja : ''}
+          </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:12px">
+          <div style="font-size:13px;font-weight:700;color:${cor}">${fmt(r.valorDoc)}</div>
+          <div style="font-size:10px;color:var(--text2)">${label}</div>
+        </div>`;
+      itemsCard.appendChild(row);
+    });
+
+    itemsWrap.appendChild(itemsCard);
+    listEl.appendChild(itemsWrap);
+  });
 }
 
 function renderFinanceiro() {
@@ -5559,7 +5811,154 @@ function setPgtoMesAtual() {
   const last = new Date(y, now.getMonth()+1, 0).getDate();
   document.getElementById('pgtoDeFilter').value  = `${y}-${m}-01`;
   document.getElementById('pgtoAteFilter').value = `${y}-${m}-${String(last).padStart(2,'0')}`;
-  renderPagamentos();
+  renderPagamentosLeve();
+}
+
+// ── Versão leve da aba Pagamentos — usa RPC em vez de pgtoData completo ────
+async function renderPagamentosLeve() {
+  const de      = document.getElementById('pgtoDeFilter').value;
+  const ate     = document.getElementById('pgtoAteFilter').value;
+  const lojaFil = document.getElementById('pgtoLojaFilter').value;
+
+  // Popula filtro de loja a partir do cadastro
+  const selLoja = document.getElementById('pgtoLojaFilter');
+  if (!selLoja.dataset.populated) {
+    const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+    selLoja.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+    selLoja.value = lojaFil;
+    selLoja.dataset.populated = '1';
+  }
+
+  // Período padrão: usa todo o intervalo disponível se não houver filtro
+  const dataIni = de  || (mesesDisponiveisCache[0] || '2000-01-01');
+  const dataFimEf = ate || new Date().toISOString().split('T')[0];
+
+  const tPg = performance.now();
+  const [resumo, diario, porLoja] = await Promise.all([
+    buscarResumoPagamentos(dataIni, dataFimEf, lojaFil),
+    buscarPagamentosDiario(dataIni, dataFimEf, lojaFil),
+    lojaFil ? Promise.resolve([]) : buscarResumoPagamentosPorLoja(dataIni, dataFimEf),
+  ]);
+  console.log(`[perf] renderPagamentosLeve fetch: ${Math.round(performance.now() - tPg)}ms`);
+
+  const hasPgto = resumo.length > 0;
+  document.getElementById('pgtoNoData').style.display  = hasPgto ? 'none'  : 'block';
+  document.getElementById('pgtoContent').style.display = hasPgto ? 'block' : 'none';
+  if (!hasPgto) return;
+
+  const byForma = {};
+  resumo.forEach(r => { byForma[r.forma] = { valor: r.fat, qty: r.qty }; });
+  const formas = Object.keys(byForma).sort((a,b) => byForma[b].valor - byForma[a].valor);
+
+  const totalFat = resumo.reduce((s,r) => s + r.fat, 0);
+  const totalQty = resumo.reduce((s,r) => s + r.qty, 0);
+  const credito  = resumo.filter(r => (r.forma||'').toUpperCase().includes('CREDITO')).reduce((s,r) => s+r.fat,0);
+  const prazo    = resumo.filter(r => (r.forma||'').toUpperCase().includes('PRAZO')).reduce((s,r) => s+r.fat,0);
+
+  makeMetrics(document.getElementById('pgtoMetrics'), [
+    { label: 'Faturamento total',     value: fmt(totalFat) },
+    { label: 'Total de vendas',       value: fmtNum(totalQty) },
+    { label: 'Cartão de crédito',     value: fmt(credito),  cls: 'neutral', sub: totalFat > 0 ? ((credito/totalFat*100).toFixed(1)+'%') : '' },
+    { label: 'Vendas a prazo',        value: fmt(prazo),    cls: prazo > 0 ? 'down' : 'neutral' },
+  ]);
+
+  destroyChart('pgtoEv');
+
+  const formaGrid = document.getElementById('pgtoFormaGrid');
+  formaGrid.innerHTML = '';
+  formas.forEach(f => {
+    const d     = byForma[f];
+    const color = pgtoColor(f);
+    const pct   = totalFat > 0 ? (d.valor / totalFat * 100).toFixed(1) : '0.0';
+    const ticket = d.qty > 0 ? d.valor / d.qty : 0;
+
+    const row = document.createElement('div');
+    row.className = 'loja-row';
+    row.style.cssText = `
+      background:var(--bg2); border:1px solid var(--border);
+      border-left:3px solid ${color}; border-radius:var(--radius);
+      padding:14px 20px; display:grid;
+      grid-template-columns:200px 1fr 1fr 1fr 1fr;
+      align-items:center; gap:16px; margin-bottom:10px;
+      box-shadow:var(--shadow-sm);
+    `;
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:14px;color:var(--text)">
+        <div style="width:10px;height:10px;border-radius:3px;background:${color};flex-shrink:0"></div>
+        ${pgtoLabel(f)}
+      </div>
+      <div class="loja-metric">
+        <div class="loja-metric-label">Faturamento</div>
+        <div class="loja-metric-value" style="color:${color}">${fmt(d.valor)}</div>
+      </div>
+      <div class="loja-metric">
+        <div class="loja-metric-label">Participação</div>
+        <div class="loja-metric-value" style="color:var(--text)">${pct}%</div>
+      </div>
+      <div class="loja-metric">
+        <div class="loja-metric-label">Qtd. vendas</div>
+        <div class="loja-metric-value">${fmtNum(d.qty)}</div>
+      </div>
+      <div class="loja-metric">
+        <div class="loja-metric-label">Ticket médio</div>
+        <div class="loja-metric-value">${fmt(ticket)}</div>
+      </div>`;
+    formaGrid.appendChild(row);
+  });
+
+  // Evolução diária
+  const dias = [...new Set(diario.map(r => r.data))].sort();
+  const ctxEv = document.getElementById('chartPgtoEvolucao').getContext('2d');
+  charts['pgtoEv'] = new Chart(ctxEv, {
+    type: 'bar',
+    data: {
+      labels: dias.map(d => d.split('-').reverse().join('/')),
+      datasets: formas.map(f => ({
+        label: pgtoLabel(f),
+        data: dias.map(d => diario.filter(r => r.data === d && r.forma === f).reduce((s,r) => s+r.valor, 0)),
+        backgroundColor: pgtoColor(f),
+        borderRadius: 3, borderSkipped: false, stack: 'pgto'
+      }))
+    },
+    options: {
+      ...chartDefaults,
+      plugins: { ...chartDefaults.plugins, legend: { display: true, position: 'top', labels: { color: '#5A6480', font: { family: 'Plus Jakarta Sans', size: 11 }, padding: 12, boxWidth: 12 } } },
+      scales: { ...chartDefaults.scales, x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } } }
+    }
+  });
+
+  // Por loja (só quando nenhuma loja específica está filtrada)
+  const grid = document.getElementById('pgtoLojaGrid');
+  grid.innerHTML = '';
+  if (!lojaFil && porLoja.length) {
+    const porLojaAgrupado = {};
+    porLoja.forEach(r => {
+      if (!porLojaAgrupado[r.loja]) porLojaAgrupado[r.loja] = { total: 0, formas: {} };
+      porLojaAgrupado[r.loja].total += r.fat;
+      porLojaAgrupado[r.loja].formas[r.forma] = { valor: r.fat, qty: r.qty };
+    });
+    Object.entries(porLojaAgrupado).sort((a,b) => b[1].total - a[1].total).forEach(([loja, d]) => {
+      const color = lojaColorMap[loja] || '#2563EB';
+      const card  = document.createElement('div');
+      card.style.cssText = `background:var(--bg2);border:1px solid var(--border);border-left:3px solid ${color};border-radius:var(--radius);padding:16px 20px;margin-bottom:12px;`;
+      const formasLoja = Object.keys(d.formas).sort((a,b) => d.formas[b].valor - d.formas[a].valor);
+      card.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+          <div style="width:10px;height:10px;border-radius:3px;background:${color}"></div>
+          <span style="font-weight:700;font-size:14px;color:var(--text)">${loja}</span>
+          <span style="margin-left:auto;font-size:13px;font-weight:600;color:${color}">${fmt(d.total)}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">
+          ${formasLoja.map(f => `
+            <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 14px;border-left:3px solid ${pgtoColor(f)}">
+              <div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">${pgtoLabel(f)}</div>
+              <div style="font-size:15px;font-weight:700;color:var(--text)">${fmt(d.formas[f].valor)}</div>
+              <div style="font-size:11px;color:var(--text2)">${fmtNum(d.formas[f].qty)} vendas · ${(d.formas[f].valor/d.total*100).toFixed(1)}%</div>
+            </div>`).join('')}
+        </div>`;
+      grid.appendChild(card);
+    });
+  }
 }
 
 function renderPagamentos() {
@@ -5887,8 +6286,8 @@ function switchTab(name, btn) {
   if (name === 'mensal')      renderMensalLeve();
   if (name === 'vendedores')  renderVendedoresLeve();
   if (name === 'produtos')    { populateProdMesSelectoresLeve(); renderProdutosLeve(); }
-  if (name === 'financeiro')  renderFinanceiro();
-  if (name === 'pagamentos')  renderPagamentos();
+  if (name === 'financeiro')  { populateFinMesFilter(); renderFinanceiroLeve(); }
+  if (name === 'pagamentos')  renderPagamentosLeve();
   if (name === 'analise')     renderAnalise();
   if (name === 'evolucao')    renderEvolucao();
   if (name === 'config')      carregarListaUsuarios();
