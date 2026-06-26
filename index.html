@@ -3188,13 +3188,18 @@ async function syncProdutosParaSupabase(rows) {
     const lojaId = await getOrCreateLojaId(nomeLoja);
     if (!lojaId) continue;
     const rowsDaLoja = rows.filter(r => r.loja === nomeLoja);
-    const datasAfetadas = [...new Set(rowsDaLoja.map(r => r.data))].filter(Boolean);
 
-    if (datasAfetadas.length) {
-      await sb.from('produtos_vendidos').delete().eq('loja_id', lojaId).in('data', datasAfetadas);
-    } else {
-      await sb.from('produtos_vendidos').delete().eq('loja_id', lojaId);
-    }
+    // IMPORTANTE: o relatório "Vendas por Produto" do C8 vem com UMA ABA POR MÊS
+    // (histórico completo da loja: abr/2025, mai/2025, ..., jun/2026, por exemplo).
+    // Cada vez que esse arquivo é carregado, ele contém TODOS os meses novamente
+    // — não é um upload incremental de só o mês em vigência. Por isso, ao
+    // carregar um novo arquivo de produtos para uma loja, apagamos TODOS os
+    // registros daquela loja em produtos_vendidos antes de inserir, e não
+    // apenas os meses presentes no arquivo. Isso evita tanto duplicação
+    // (reupload do mesmo mês com data de corte diferente somando valores)
+    // quanto registros órfãos (um mês que existia no banco mas não está mais
+    // no arquivo novo, e por isso nunca seria limpo se só apagássemos por mês).
+    await sb.from('produtos_vendidos').delete().eq('loja_id', lojaId);
 
     const payload = rowsDaLoja.map(r => ({
       loja_id: lojaId, data: r.data || null, produto: r.produto, barras: r.barras || null,
