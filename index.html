@@ -932,24 +932,24 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end;">
           <div>
             <div class="filter-label" style="margin-bottom:6px">Faturamento</div>
-            <select class="date-input" id="analiseTipoFat" style="width:100%" onchange="renderAnalise()">
+            <select class="date-input" id="analiseTipoFat" style="width:100%" onchange="renderAnaliseLeve()">
               <option value="bruto">Bruto (total de vendas)</option>
               <option value="liquido">Líquido (excl. devoluções)</option>
             </select>
           </div>
           <div>
             <div class="filter-label" style="margin-bottom:6px">Loja</div>
-            <select class="date-input" id="analiseLojaFilter" style="width:100%" onchange="renderAnalise()">
+            <select class="date-input" id="analiseLojaFilter" style="width:100%" onchange="renderAnaliseLeve()">
               <option value="">Todas as lojas</option>
             </select>
           </div>
           <div>
             <div class="filter-label" style="margin-bottom:6px">Período — de</div>
-            <input type="date" class="date-input" id="analiseDeFilter" style="width:100%" onchange="renderAnalise()">
+            <input type="date" class="date-input" id="analiseDeFilter" style="width:100%" onchange="renderAnaliseLeve()">
           </div>
           <div>
             <div class="filter-label" style="margin-bottom:6px">Período — até</div>
-            <input type="date" class="date-input" id="analiseAteFilter" style="width:100%" onchange="renderAnalise()">
+            <input type="date" class="date-input" id="analiseAteFilter" style="width:100%" onchange="renderAnaliseLeve()">
           </div>
           <div style="display:flex;gap:8px;align-items:flex-end;">
             <button class="apply-btn" onclick="limparFiltrosAnalise()" style="flex:1">Limpar</button>
@@ -1002,15 +1002,15 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
       <!-- Filtros -->
       <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px;margin-bottom:24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
         <span class="filter-label">Empresa:</span>
-        <select class="date-input" id="evolLojaFilter" style="min-width:180px" onchange="renderEvolucao()">
+        <select class="date-input" id="evolLojaFilter" style="min-width:180px" onchange="renderEvolucaoLeve()">
           <option value="">Todas as empresas</option>
         </select>
         <span class="filter-label" style="margin-left:8px">Período — de:</span>
-        <select class="date-input" id="evolDeFilter" style="min-width:140px" onchange="renderEvolucao()">
+        <select class="date-input" id="evolDeFilter" style="min-width:140px" onchange="renderEvolucaoLeve()">
           <option value="">Início</option>
         </select>
         <span class="filter-sep">até</span>
-        <select class="date-input" id="evolAteFilter" style="min-width:140px" onchange="renderEvolucao()">
+        <select class="date-input" id="evolAteFilter" style="min-width:140px" onchange="renderEvolucaoLeve()">
           <option value="">Fim</option>
         </select>
         <button class="apply-btn" onclick="setEvolTudo()">Tudo</button>
@@ -3355,6 +3355,34 @@ async function buscarFaturamentoMensal(lojaNome) {
   }));
 }
 
+// ── Despesas (contas a pagar) por loja em um período — usado na aba Análise ─
+async function buscarDespesasPeriodo(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_despesas_periodo', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({
+    loja: r.loja_nome, desp: parseFloat(r.despesas), qty: parseInt(r.qtd_lancamentos)
+  }));
+}
+
+// ── Despesas diárias — usado na aba Análise quando o período é curto ───────
+async function buscarDespesasDiario(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_despesas_diario', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({
+    data: r.dia, loja: r.loja_nome, valor: parseFloat(r.despesas)
+  }));
+}
+
+// ── Série mensal de despesas (evolução de longo prazo) ──────────────────────
+async function buscarDespesasMensal(lojaNome) {
+  const rows = await callRpc('fn_despesas_mensal', { p_loja_id: lojaIdPorNome(lojaNome) }, false);
+  return rows.map(r => ({
+    mes: r.mes, loja: r.loja_nome, valor: parseFloat(r.despesas), qty: parseInt(r.qtd_lancamentos)
+  }));
+}
+
 // ── Ranking de vendedores ───────────────────────────────────────────────────
 async function buscarRankingVendedores(dataInicio, dataFim, lojaNome, limite = 50) {
   const rows = await callRpc('fn_ranking_vendedores', {
@@ -5289,117 +5317,107 @@ function renderFinanceiro() {
   }
 }
 
-function limparFiltrosAnalise() {
-  document.getElementById('analiseDeFilter').value  = '';
-  document.getElementById('analiseAteFilter').value = '';
-  document.getElementById('analiseLojaFilter').value = '';
-  renderAnalise();
-}
-
 function setAnaliseMesAtual() {
   const now = new Date();
   const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
   document.getElementById('analiseDeFilter').value  = `${y}-${m}-01`;
   document.getElementById('analiseAteFilter').value = now.toISOString().split('T')[0];
-  renderAnalise();
+  renderAnaliseLeve();
 }
 
 function setAnaliseAnoAtual() {
   const y = new Date().getFullYear();
   document.getElementById('analiseDeFilter').value  = `${y}-01-01`;
   document.getElementById('analiseAteFilter').value = `${y}-12-31`;
-  renderAnalise();
+  renderAnaliseLeve();
 }
 
-function renderAnalise() {
-  const tipoFat    = document.getElementById('analiseTipoFat').value;
-  const lojaFil    = document.getElementById('analiseLojaFilter').value;
-  const de         = document.getElementById('analiseDeFilter').value;
-  const ate        = document.getElementById('analiseAteFilter').value;
-
-  // Populate loja filter
-  const todasLojas = [...new Set([
-    ...allData.map(r => r.loja),
-    ...finPagarData.map(r => r.loja)
-  ])].sort();
-  const selLoja = document.getElementById('analiseLojaFilter');
-  const prevLoja = selLoja.value;
-  selLoja.innerHTML = '<option value="">Todas as lojas</option>' +
-    todasLojas.map(l => `<option value="${l}" ${l===prevLoja?'selected':''}>${l}</option>`).join('');
+// ── Versão leve da aba Análise — usa RPC em vez de allData/finPagarData ─────
+// Cruza faturamento (vendas) com despesas (financeiro tipo=pagar) num período,
+// igual à função antiga, mas buscando do Supabase em vez de depender dos
+// arrays legados (só preenchidos quando há upload na sessão atual).
+async function renderAnaliseLeve() {
+  const lojaFil = document.getElementById('analiseLojaFilter').value;
+  const de      = document.getElementById('analiseDeFilter').value;
+  const ate     = document.getElementById('analiseAteFilter').value;
 
   const noData  = document.getElementById('analiseNoData');
   const content = document.getElementById('analiseContent');
 
-  if (!allData.length) {
+  // Período padrão: se nada selecionado, usa do menor ao maior mês disponível
+  let dataInicio = de, dataFim = ate;
+  if (!dataInicio || !dataFim) {
+    if (mesesDisponiveisCache.length) {
+      dataInicio = dataInicio || `${mesesDisponiveisCache[0].substring(0,7)}-01`;
+      const ultimoMes = mesesDisponiveisCache[mesesDisponiveisCache.length - 1].substring(0,7);
+      const [uy, um] = ultimoMes.split('-').map(Number);
+      dataFim = dataFim || `${ultimoMes}-${String(new Date(uy, um, 0).getDate()).padStart(2,'0')}`;
+    } else {
+      dataInicio = dataInicio || '2000-01-01';
+      dataFim = dataFim || new Date().toISOString().split('T')[0];
+    }
+  }
+
+  // Determina granularidade pelo tamanho do período filtrado (mesma regra de antes: ≤60 dias = diário)
+  const periodoEmDias = Math.round((new Date(dataFim) - new Date(dataInicio)) / (1000*60*60*24));
+  const useDiario = periodoEmDias <= 60;
+
+  const tA = performance.now();
+  const [resumoFat, resumoDesp, serieFat, serieDesp] = await Promise.all([
+    buscarResumoFaturamento(dataInicio, dataFim, lojaFil),
+    buscarDespesasPeriodo(dataInicio, dataFim, lojaFil),
+    useDiario ? buscarFaturamentoDiario(dataInicio, dataFim, lojaFil) : buscarFaturamentoMensal(lojaFil),
+    useDiario ? buscarDespesasDiario(dataInicio, dataFim, lojaFil)    : buscarDespesasMensal(lojaFil),
+  ]);
+  console.log(`[perf] renderAnaliseLeve fetch: ${Math.round(performance.now() - tA)}ms`);
+
+  const temFat  = resumoFat.some(r => r.qty > 0);
+  const temDesp = resumoDesp.some(r => r.qty > 0);
+  if (!temFat && !temDesp) {
     noData.style.display = 'block'; content.style.display = 'none'; return;
   }
   noData.style.display = 'none'; content.style.display = 'block';
 
-  // Filter sales data
-  let vendas = allData;
-  if (lojaFil) vendas = vendas.filter(r => r.loja === lojaFil);
-  if (de)      vendas = vendas.filter(r => r.data >= de);
-  if (ate)     vendas = vendas.filter(r => r.data <= ate);
-
-  // Filter despesas (contas a pagar - only ABERTO+QUITADO, use dtVenc for period)
-  let despesas = finPagarData;
-  if (lojaFil) despesas = despesas.filter(r => r.loja === lojaFil);
-  if (de)      despesas = despesas.filter(r => (r.dtVenc || r.emissao) >= de);
-  if (ate)     despesas = despesas.filter(r => (r.dtVenc || r.emissao) <= ate);
-
-  // ── Determina granularidade: diário (≤60 dias) ou mensal (>60 dias) ──
-  // Calcula quantos dias o período cobre
-  const allDates   = [...new Set(vendas.map(r => r.data))].sort();
-  const allDespDates = despesas.map(r => (r.dtVenc || r.emissao || '').substring(0,10)).filter(Boolean);
-  const allDatesCombined = [...new Set([...allDates, ...allDespDates])].sort();
-
-  let periodoEmDias = 0;
-  if (de && ate) {
-    periodoEmDias = Math.round((new Date(ate) - new Date(de)) / (1000*60*60*24));
-  } else if (allDatesCombined.length >= 2) {
-    periodoEmDias = Math.round((new Date(allDatesCombined[allDatesCombined.length-1]) - new Date(allDatesCombined[0])) / (1000*60*60*24));
-  }
-
-  const useDiario = periodoEmDias <= 60;
-
-  function keyFat(r)  { return useDiario ? r.data : r.data.substring(0,7); }
-  function keyDesp(r) { const d = r.dtVenc || r.emissao || ''; return useDiario ? d.substring(0,10) : d.substring(0,7); }
   function labelKey(k) {
     if (useDiario) return k.split('-').reverse().join('/');
     const [y,m] = k.split('-');
     return new Date(+y, +m-1, 1).toLocaleDateString('pt-BR', { month:'short', year:'numeric' });
   }
 
-  // Aggregate faturamento by key
+  // Para a série mensal (Evolução de longo prazo), filtra pelo período se necessário
+  let serieFatFiltrada = serieFat;
+  let serieDespFiltrada = serieDesp;
+  if (!useDiario) {
+    const deM = dataInicio.substring(0,7), ateM = dataFim.substring(0,7);
+    serieFatFiltrada  = serieFat.filter(r  => r.mes.substring(0,7) >= deM && r.mes.substring(0,7) <= ateM);
+    serieDespFiltrada = serieDesp.filter(r => r.mes.substring(0,7) >= deM && r.mes.substring(0,7) <= ateM);
+  }
+
+  // Agrega faturamento por chave (dia ou mês)
   const fatMap = {};
-  vendas.forEach(r => {
-    const k = keyFat(r);
-    if (!fatMap[k]) fatMap[k] = 0;
-    fatMap[k] += r.valor;
+  serieFatFiltrada.forEach(r => {
+    const k = useDiario ? r.data : r.mes.substring(0,7);
+    fatMap[k] = (fatMap[k] || 0) + r.valor;
   });
 
-  // Aggregate despesas by key
+  // Agrega despesas por chave (dia ou mês)
   const despMap = {};
-  despesas.forEach(r => {
-    const k = keyDesp(r);
-    if (!k) return;
-    if (!despMap[k]) despMap[k] = 0;
-    despMap[k] += r.valorDoc;
+  serieDespFiltrada.forEach(r => {
+    const k = useDiario ? r.data : r.mes.substring(0,7);
+    despMap[k] = (despMap[k] || 0) + r.valor;
   });
 
-  // Combined keys sorted
   const allKeys = [...new Set([...Object.keys(fatMap), ...Object.keys(despMap)])].sort();
-  const labels  = allKeys.map(labelKey);
+  const labels   = allKeys.map(labelKey);
   const fatVals  = allKeys.map(k => fatMap[k]  || 0);
   const despVals = allKeys.map(k => despMap[k] || 0);
   const saldoVals = allKeys.map((k,i) => fatVals[i] - despVals[i]);
 
-  const totalFat  = fatVals.reduce((a,b) => a+b, 0);
-  const totalDesp = despVals.reduce((a,b) => a+b, 0);
+  const totalFat  = resumoFat.reduce((s,r) => s + r.fat, 0);
+  const totalDesp = resumoDesp.reduce((s,r) => s + r.desp, 0);
   const totalSaldo = totalFat - totalDesp;
   const margem = totalFat > 0 ? (totalSaldo / totalFat) * 100 : 0;
 
-  // Metrics
   makeMetrics(document.getElementById('analiseMetrics'), [
     { label: 'Faturamento total',  value: fmt(totalFat),   cls: 'up' },
     { label: 'Despesas totais',    value: fmt(totalDesp),  cls: 'down' },
@@ -5410,14 +5428,17 @@ function renderAnalise() {
   // Por loja grid
   const lojaGrid = document.getElementById('analiseLojaGrid');
   lojaGrid.innerHTML = '';
-  const lojas = [...new Set([
-    ...vendas.map(r => r.loja),
-    ...despesas.map(r => r.loja)
-  ])].sort();
+  const despByLojaNome = {};
+  resumoDesp.forEach(r => { despByLojaNome[r.loja] = r.desp; });
 
-  lojas.forEach(loja => {
-    const fat  = vendas.filter(r => r.loja === loja).reduce((s,r) => s + r.valor, 0);
-    const desp = despesas.filter(r => r.loja === loja).reduce((s,r) => s + r.valorDoc, 0);
+  const lojasComDados = resumoFat
+    .filter(r => r.qty > 0 || (despByLojaNome[r.loja] || 0) > 0)
+    .sort((a,b) => b.fat - a.fat);
+
+  lojasComDados.forEach(r => {
+    const loja = r.loja;
+    const fat  = r.fat;
+    const desp = despByLojaNome[loja] || 0;
     const saldo = fat - desp;
     const color = lojaColorMap[loja] || '#4F7EFF';
     const row = document.createElement('div');
@@ -5516,10 +5537,17 @@ function renderAnalise() {
   });
 }
 
+function limparFiltrosAnalise() {
+  document.getElementById('analiseLojaFilter').value = '';
+  document.getElementById('analiseDeFilter').value = '';
+  document.getElementById('analiseAteFilter').value = '';
+  renderAnaliseLeve();
+}
+
 function setEvolTudo() {
   document.getElementById('evolDeFilter').value  = '';
   document.getElementById('evolAteFilter').value = '';
-  renderEvolucao();
+  renderEvolucaoLeve();
 }
 
 function setEvolAnoAtual() {
@@ -5529,79 +5557,80 @@ function setEvolAnoAtual() {
   const opts = [...selDe.options].map(o => o.value).filter(Boolean);
   selDe.value  = opts.find(o => o.startsWith(ano)) || opts[0] || '';
   selAte.value = [...opts].reverse().find(o => o.startsWith(ano)) || opts[opts.length-1] || '';
-  renderEvolucao();
+  renderEvolucaoLeve();
 }
 
-function populateEvolSelectors() {
-  // Months from vendas
-  const mesesVend = [...new Set(allData.map(r => r.data.substring(0,7)))].sort();
-  // Months from despesas
-  const mesesDesp = [...new Set(finPagarData.map(r => (r.dtVenc||r.emissao||'').substring(0,7)).filter(Boolean))].sort();
-  const allMeses  = [...new Set([...mesesVend, ...mesesDesp])].sort();
+const mesLabelEvol = ym => {
+  const [y, m] = ym.split('-');
+  return new Date(+y, +m-1, 1).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
+};
 
-  const mesLabel = ym => {
-    const [y, m] = ym.split('-');
-    return new Date(+y, +m-1, 1).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
-  };
-  const optsHtml = allMeses.map(m => `<option value="${m}">${mesLabel(m)}</option>`).join('');
-  document.getElementById('evolDeFilter').innerHTML  = '<option value="">Início</option>' + optsHtml;
-  document.getElementById('evolAteFilter').innerHTML = '<option value="">Fim</option>'   + optsHtml;
+function populateEvolSelectorsLeve(allMesesDisponiveis) {
+  const selDe  = document.getElementById('evolDeFilter');
+  const selAte = document.getElementById('evolAteFilter');
+  const prevDe = selDe.value, prevAte = selAte.value;
+  const optsHtml = allMesesDisponiveis.map(m => `<option value="${m}">${mesLabelEvol(m)}</option>`).join('');
+  selDe.innerHTML  = '<option value="">Início</option>' + optsHtml;
+  selAte.innerHTML = '<option value="">Fim</option>'   + optsHtml;
+  if (prevDe  && allMesesDisponiveis.includes(prevDe))  selDe.value  = prevDe;
+  if (prevAte && allMesesDisponiveis.includes(prevAte)) selAte.value = prevAte;
 
-  // Lojas
-  const todasLojas = [...new Set([
-    ...allData.map(r => r.loja),
-    ...finPagarData.map(r => r.loja)
-  ])].sort();
+  // Lojas (cadastro completo, não depende de upload na sessão)
+  const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
   const selLoja = document.getElementById('evolLojaFilter');
-  const prev = selLoja.value;
+  const prevLoja = selLoja.value;
   selLoja.innerHTML = '<option value="">Todas as empresas</option>' +
-    todasLojas.map(l => `<option value="${l}" ${l===prev?'selected':''}>${l}</option>`).join('');
+    nomesLojas.map(l => `<option value="${l}" ${l===prevLoja?'selected':''}>${l}</option>`).join('');
 }
 
-function renderEvolucao() {
-  populateEvolSelectors();
-
+// ── Versão leve da aba Evolução — usa RPC (séries mensais) em vez de allData/finPagarData ─
+async function renderEvolucaoLeve() {
   const lojaFil = document.getElementById('evolLojaFilter').value;
-  const deFil   = document.getElementById('evolDeFilter').value;
-  const ateFil  = document.getElementById('evolAteFilter').value;
 
-  // Filter vendas
-  let vendas = allData;
-  if (lojaFil) vendas = vendas.filter(r => r.loja === lojaFil);
-  if (deFil)   vendas = vendas.filter(r => r.data.substring(0,7) >= deFil);
-  if (ateFil)  vendas = vendas.filter(r => r.data.substring(0,7) <= ateFil);
+  const tE = performance.now();
+  const [serieFatTudo, serieDespTudo] = await Promise.all([
+    buscarFaturamentoMensal(lojaFil),
+    buscarDespesasMensal(lojaFil),
+  ]);
+  console.log(`[perf] renderEvolucaoLeve fetch: ${Math.round(performance.now() - tE)}ms`);
 
-  // Filter despesas
-  let despesas = finPagarData;
-  if (lojaFil) despesas = despesas.filter(r => r.loja === lojaFil);
-  if (deFil)   despesas = despesas.filter(r => (r.dtVenc||r.emissao||'').substring(0,7) >= deFil);
-  if (ateFil)  despesas = despesas.filter(r => (r.dtVenc||r.emissao||'').substring(0,7) <= ateFil);
+  // Meses disponíveis = união de tudo que veio do banco (sem filtro de período ainda)
+  const todosMesesDisponiveis = [...new Set([
+    ...serieFatTudo.map(r => r.mes.substring(0,7)),
+    ...serieDespTudo.map(r => r.mes.substring(0,7)),
+  ])].sort();
+  populateEvolSelectorsLeve(todosMesesDisponiveis);
 
-  const mesLabel = ym => {
-    const [y, m] = ym.split('-');
-    return new Date(+y, +m-1, 1).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
-  };
+  const deFil  = document.getElementById('evolDeFilter').value;
+  const ateFil = document.getElementById('evolAteFilter').value;
+
+  let vendas = serieFatTudo;
+  if (deFil)  vendas = vendas.filter(r => r.mes.substring(0,7) >= deFil);
+  if (ateFil) vendas = vendas.filter(r => r.mes.substring(0,7) <= ateFil);
+
+  let despesas = serieDespTudo;
+  if (deFil)  despesas = despesas.filter(r => r.mes.substring(0,7) >= deFil);
+  if (ateFil) despesas = despesas.filter(r => r.mes.substring(0,7) <= ateFil);
+
+  const mesLabel = mesLabelEvol;
 
   // All months in range
   const allMeses = [...new Set([
-    ...vendas.map(r => r.data.substring(0,7)),
-    ...despesas.map(r => (r.dtVenc||r.emissao||'').substring(0,7)).filter(Boolean)
+    ...vendas.map(r => r.mes.substring(0,7)),
+    ...despesas.map(r => r.mes.substring(0,7)),
   ])].sort();
 
   // All years
   const allAnos = [...new Set(allMeses.map(m => m.substring(0,4)))].sort();
 
   // All lojas in scope
-  const lojas = lojaFil ? [lojaFil] : [...new Set([
-    ...allData.map(r => r.loja),
-    ...finPagarData.map(r => r.loja)
-  ])].sort();
+  const lojas = lojaFil ? [lojaFil] : todasLojasCadastro.map(l => l.nome).sort();
 
   // --- Aggregate faturamento: mes → loja → total ---
   const fatByMesLoja = {};
   allMeses.forEach(m => { fatByMesLoja[m] = {}; lojas.forEach(l => fatByMesLoja[m][l] = 0); });
   vendas.forEach(r => {
-    const m = r.data.substring(0,7);
+    const m = r.mes.substring(0,7);
     if (fatByMesLoja[m] && fatByMesLoja[m][r.loja] !== undefined)
       fatByMesLoja[m][r.loja] += r.valor;
   });
@@ -5610,7 +5639,7 @@ function renderEvolucao() {
   const fatByAnoLoja = {};
   allAnos.forEach(a => { fatByAnoLoja[a] = {}; lojas.forEach(l => fatByAnoLoja[a][l] = 0); });
   vendas.forEach(r => {
-    const a = r.data.substring(0,4);
+    const a = r.mes.substring(0,4);
     if (fatByAnoLoja[a]) fatByAnoLoja[a][r.loja] = (fatByAnoLoja[a][r.loja]||0) + r.valor;
   });
 
@@ -5618,14 +5647,14 @@ function renderEvolucao() {
   const despByMesLoja = {};
   allMeses.forEach(m => { despByMesLoja[m] = {}; lojas.forEach(l => despByMesLoja[m][l] = 0); });
   despesas.forEach(r => {
-    const m = (r.dtVenc||r.emissao||'').substring(0,7);
+    const m = r.mes.substring(0,7);
     if (despByMesLoja[m] && despByMesLoja[m][r.loja] !== undefined)
-      despByMesLoja[m][r.loja] += r.valorDoc;
+      despByMesLoja[m][r.loja] += r.valor;
   });
 
   // Totals for metrics
   const totalFat  = vendas.reduce((s,r) => s + r.valor, 0);
-  const totalDesp = despesas.reduce((s,r) => s + r.valorDoc, 0);
+  const totalDesp = despesas.reduce((s,r) => s + r.valor, 0);
   const saldo     = totalFat - totalDesp;
   const melhorMes = allMeses.reduce((best, m) => {
     const tot = lojas.reduce((s,l) => s + (fatByMesLoja[m]?.[l]||0), 0);
@@ -5754,6 +5783,7 @@ function renderEvolucao() {
     options: { ...baseOpts('k'), plugins: { ...baseOpts('k').plugins, legend: { display: false } } }
   });
 }
+
 
 let pgtoData = []; // vendas com forma de pagamento
 
@@ -6315,8 +6345,8 @@ function switchTab(name, btn) {
   if (name === 'produtos')    { populateProdMesSelectoresLeve(); renderProdutosLeve(); }
   if (name === 'financeiro')  { populateFinMesFilter(); renderFinanceiroLeve(); }
   if (name === 'pagamentos')  renderPagamentosLeve();
-  if (name === 'analise')     renderAnalise();
-  if (name === 'evolucao')    renderEvolucao();
+  if (name === 'analise')     renderAnaliseLeve();
+  if (name === 'evolucao')    renderEvolucaoLeve();
   if (name === 'config')      carregarListaUsuarios();
 }
 
