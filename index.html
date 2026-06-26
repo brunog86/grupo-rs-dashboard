@@ -1204,19 +1204,29 @@ async function iniciarAposLogin() {
   atualizarProgressoCarregamento(30, 'Verificando dados disponíveis...');
 
   const t0 = performance.now();
-  const [lojasResult, countResult, mesesResult] = await Promise.all([
-    carregarTodasLojas(),
-    sb.from('vendas').select('id', { count: 'exact', head: true }),
-    buscarMesesDisponiveis(),
-  ]);
-  const totalVendas = countResult.count;
+  const timeoutGenerico = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
+
+  let temAlgumaVenda = false, mesesResult = [];
+  try {
+    const [lojasResult, existeResult, mResult] = await Promise.all([
+      carregarTodasLojas(),
+      // Checagem leve: só confirma se EXISTE pelo menos 1 linha, sem contar tudo (muito mais rápido)
+      Promise.race([sb.from('vendas').select('id').limit(1), timeoutGenerico(15000)]),
+      Promise.race([buscarMesesDisponiveis(), timeoutGenerico(15000)]),
+    ]);
+    temAlgumaVenda = (existeResult.data || []).length > 0;
+    mesesResult = mResult;
+  } catch (e) {
+    console.error('[iniciarAposLogin] Timeout ou erro no carregamento inicial:', e.message);
+    showToast('Demora ao conectar com o servidor. Tente recarregar a página.', 'error');
+  }
   mesesDisponiveisCache = mesesResult;
   console.log(`[perf] Carregamento inicial: ${Math.round(performance.now() - t0)}ms`);
 
   atualizarProgressoCarregamento(100, 'Pronto!');
   document.getElementById('dataLoadingScreen').style.display = 'none';
 
-  const temDados = (totalVendas || 0) > 0;
+  const temDados = temAlgumaVenda;
 
   if (temDados) {
     document.getElementById('uploadZone').style.display = 'none';
@@ -1790,15 +1800,24 @@ function diasUteisNoMes(ym) {
 }
 
 async function renderMensalLeve() {
-  // Garante que temos a lista de meses mais atual (sem cache, pode ter mudado)
-  const mesesDisp = await callRpc('fn_meses_disponiveis', {}, false);
-  mesesDisponiveisCache = mesesDisp.map(r => r.mes).filter(Boolean).sort();
+  // Usa o cache já carregado no login — evita recontar 'distinct month' a cada clique.
+  // Só rebusca se o cache estiver vazio (ex: depois de um novo upload de arquivo).
+  if (!mesesDisponiveisCache.length) {
+    const mesesDisp = await callRpc('fn_meses_disponiveis', {}, false);
+    mesesDisponiveisCache = mesesDisp.map(r => r.mes).filter(Boolean).sort();
+  }
 
   if (!activeMonth && mesesDisponiveisCache.length) {
     activeMonth = mesesDisponiveisCache[mesesDisponiveisCache.length - 1].substring(0,7);
   }
 
   const mesesUnicos = [...new Set(mesesDisponiveisCache.map(m => m.substring(0,7)))].sort();
+
+  // Protege contra activeMonth "zumbi" de uma sessão anterior que não existe mais nos dados atuais
+  if (activeMonth && mesesUnicos.length && !mesesUnicos.includes(activeMonth)) {
+    activeMonth = mesesUnicos[mesesUnicos.length - 1];
+  }
+  if (!mesesUnicos.length) activeMonth = null;
 
   // Popula o dropdown de Mês/Ano
   const mesSelect = document.getElementById('mensalMesSelect');
@@ -2916,6 +2935,8 @@ function loadFiles(files) {
         } else {
           showToast(`${newRows.length} registros carregados — ${lojasNovas.join(', ')}${temPgto ? ' (formas de pagamento incluídas)' : ''}`, 'success');
         }
+        mesesDisponiveisCache = []; // força reconsulta dos meses na próxima vez que abrir a Visão Mensal
+        limparRpcCache();
         salvarLocal();
         initDashboard();
       }
@@ -3185,10 +3206,22 @@ function rpcCacheKey(fn, params) { return fn + '::' + JSON.stringify(params); }
 async function callRpc(fnName, params, useCache = true) {
   const key = rpcCacheKey(fnName, params);
   if (useCache && rpcCache[key]) return rpcCache[key];
-  const { data, error } = await sb.rpc(fnName, params);
-  if (error) { console.error(`[RPC ${fnName}]`, error); return []; }
-  if (useCache) rpcCache[key] = data;
-  return data || [];
+
+  const TIMEOUT_MS = 15000; // nunca espera mais que 15s por uma chamada
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`Tempo esgotado ao chamar ${fnName}`)), TIMEOUT_MS)
+  );
+
+  try {
+    const { data, error } = await Promise.race([sb.rpc(fnName, params), timeoutPromise]);
+    if (error) { console.error(`[RPC ${fnName}]`, error); return []; }
+    if (useCache) rpcCache[key] = data;
+    return data || [];
+  } catch (e) {
+    console.error(`[RPC ${fnName}] Falhou ou expirou:`, e.message);
+    showToast(`Demora ao buscar dados (${fnName}). Tente recarregar a página.`, 'error');
+    return [];
+  }
 }
 function limparRpcCache() { Object.keys(rpcCache).forEach(k => delete rpcCache[k]); }
 
