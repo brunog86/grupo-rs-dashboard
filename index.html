@@ -3386,6 +3386,24 @@ async function buscarRankingMarcas(dataInicio, dataFim, lojaNome, limite = 100) 
   return rows.map(r => ({ marca: r.marca, fat: parseFloat(r.faturamento), qty: parseFloat(r.quantidade) }));
 }
 
+// ── Total real de produtos vendidos em um período (sem limite de 500) ──────
+// Usado só para os cards de métrica de Produtos & Marcas — o ranking visual
+// (buscarRankingProdutos) continua limitado, mas o total exibido precisa ser
+// o total real, não a soma apenas dos itens retornados pelo ranking.
+async function buscarTotalProdutosPeriodo(dataInicio, dataFim, lojaNome, marca) {
+  const rows = await callRpc('fn_total_produtos_periodo', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome),
+    p_marca: marca || null
+  }, false);
+  const r = rows[0];
+  if (!r) return { fat: 0, qty: 0, distintos: 0 };
+  return {
+    fat: parseFloat(r.faturamento_total) || 0,
+    qty: parseFloat(r.quantidade_total) || 0,
+    distintos: parseInt(r.produtos_distintos) || 0
+  };
+}
+
 // ── Resumo financeiro (vencido/a vencer/quitado) por loja ──────────────────
 async function buscarResumoFinanceiro(lojaNome) {
   const rows = await callRpc('fn_resumo_financeiro', { p_loja_id: lojaIdPorNome(lojaNome) }, false);
@@ -3899,8 +3917,11 @@ async function renderProdutosMarcaLeve() {
   const produtos = await buscarRankingProdutos(dataInicio, dataFim, lojaFil, marca, 500);
   if (!produtos.length) { sec.style.display = 'none'; return; }
 
-  const totalFat = produtos.reduce((s,p) => s + p.fat, 0);
-  const totalQty = produtos.reduce((s,p) => s + p.qty, 0);
+  // Total real do período para esta marca (sem limite de 500) — mesma lógica
+  // de correção aplicada em renderProdutosLeve, para esta marca específica.
+  const totalReal = await buscarTotalProdutosPeriodo(dataInicio, dataFim, lojaFil, marca);
+  const totalFat = totalReal.fat;
+  const totalQty = totalReal.qty;
 
   document.getElementById('prodPorMarcaTitulo').textContent = `${marca}`;
   document.getElementById('prodPorMarcaStats').textContent =
@@ -3976,9 +3997,10 @@ async function renderProdutosLeve() {
   const content = document.getElementById('prodContent');
 
   const tP = performance.now();
-  const [produtos, marcas] = await Promise.all([
+  const [produtos, marcas, totalReal] = await Promise.all([
     buscarRankingProdutos(dataInicio, dataFim, lojaFil, marcaFil, 500),
     buscarRankingMarcas(dataInicio, dataFim, lojaFil, 200),
+    buscarTotalProdutosPeriodo(dataInicio, dataFim, lojaFil, marcaFil),
   ]);
   console.log(`[perf] renderProdutosLeve fetch: ${Math.round(performance.now() - tP)}ms`);
 
@@ -3992,13 +4014,18 @@ async function renderProdutosLeve() {
   prodRankingExpanded  = false;
   marcaRankingExpanded = false;
 
-  const totalFat = lastSortedProd.reduce((s,[,d]) => s + d.fat, 0);
-  const totalQty = lastSortedProd.reduce((s,[,d]) => s + d.qty, 0);
+  // Usa o total REAL (sem limite de 500) vindo de fn_total_produtos_periodo.
+  // Antes, totalFat/totalQty eram a soma só dos produtos retornados pelo
+  // ranking (top 500), o que causava divergência em períodos com muitos
+  // produtos distintos. O ranking (lastSortedProd) continua limitado a 500
+  // para exibição, mas os cards agora mostram o valor correto do período.
+  const totalFat = totalReal.fat;
+  const totalQty = totalReal.qty;
 
   makeMetrics(document.getElementById('prodMetrics'), [
     { label: 'Faturamento total', value: fmt(totalFat) },
     { label: 'Itens vendidos', value: fmtNum(totalQty) },
-    { label: 'Produtos distintos', value: lastSortedProd.length },
+    { label: 'Produtos distintos', value: totalReal.distintos || lastSortedProd.length },
     { label: 'Marcas distintas', value: lastSortedMarca.length }
   ]);
 
@@ -4211,7 +4238,7 @@ function setProdMes() {
   const best = opts.find(o => o === ym) || opts[opts.length - 1] || '';
   selDE.value  = best;
   selATE.value = best;
-  renderProdutos();
+  renderProdutosLeve();
 }
 
 function setProdAno() {
@@ -4224,7 +4251,7 @@ function setProdAno() {
   const ate   = [...opts].reverse().find(o => o.startsWith(ano)) || opts[opts.length-1] || '';
   selDE.value  = deste;
   selATE.value = ate;
-  renderProdutos();
+  renderProdutosLeve();
 }
 
 function setProdTudo() {
