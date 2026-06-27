@@ -3188,18 +3188,13 @@ async function syncProdutosParaSupabase(rows) {
     const lojaId = await getOrCreateLojaId(nomeLoja);
     if (!lojaId) continue;
     const rowsDaLoja = rows.filter(r => r.loja === nomeLoja);
+    const datasAfetadas = [...new Set(rowsDaLoja.map(r => r.data))].filter(Boolean);
 
-    // IMPORTANTE: o relatório "Vendas por Produto" do C8 vem com UMA ABA POR MÊS
-    // (histórico completo da loja: abr/2025, mai/2025, ..., jun/2026, por exemplo).
-    // Cada vez que esse arquivo é carregado, ele contém TODOS os meses novamente
-    // — não é um upload incremental de só o mês em vigência. Por isso, ao
-    // carregar um novo arquivo de produtos para uma loja, apagamos TODOS os
-    // registros daquela loja em produtos_vendidos antes de inserir, e não
-    // apenas os meses presentes no arquivo. Isso evita tanto duplicação
-    // (reupload do mesmo mês com data de corte diferente somando valores)
-    // quanto registros órfãos (um mês que existia no banco mas não está mais
-    // no arquivo novo, e por isso nunca seria limpo se só apagássemos por mês).
-    await sb.from('produtos_vendidos').delete().eq('loja_id', lojaId);
+    if (datasAfetadas.length) {
+      await sb.from('produtos_vendidos').delete().eq('loja_id', lojaId).in('data', datasAfetadas);
+    } else {
+      await sb.from('produtos_vendidos').delete().eq('loja_id', lojaId);
+    }
 
     const payload = rowsDaLoja.map(r => ({
       loja_id: lojaId, data: r.data || null, produto: r.produto, barras: r.barras || null,
@@ -3417,24 +3412,6 @@ async function buscarRankingMarcas(dataInicio, dataFim, lojaNome, limite = 100) 
     p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome), p_limite: limite
   }, false);
   return rows.map(r => ({ marca: r.marca, fat: parseFloat(r.faturamento), qty: parseFloat(r.quantidade) }));
-}
-
-// ── Total real de produtos vendidos em um período (sem limite de 500) ──────
-// Usado só para os cards de métrica de Produtos & Marcas — o ranking visual
-// (buscarRankingProdutos) continua limitado, mas o total exibido precisa ser
-// o total real, não a soma apenas dos itens retornados pelo ranking.
-async function buscarTotalProdutosPeriodo(dataInicio, dataFim, lojaNome, marca) {
-  const rows = await callRpc('fn_total_produtos_periodo', {
-    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome),
-    p_marca: marca || null
-  }, false);
-  const r = rows[0];
-  if (!r) return { fat: 0, qty: 0, distintos: 0 };
-  return {
-    fat: parseFloat(r.faturamento_total) || 0,
-    qty: parseFloat(r.quantidade_total) || 0,
-    distintos: parseInt(r.produtos_distintos) || 0
-  };
 }
 
 // ── Resumo financeiro (vencido/a vencer/quitado) por loja ──────────────────
@@ -3950,11 +3927,8 @@ async function renderProdutosMarcaLeve() {
   const produtos = await buscarRankingProdutos(dataInicio, dataFim, lojaFil, marca, 500);
   if (!produtos.length) { sec.style.display = 'none'; return; }
 
-  // Total real do período para esta marca (sem limite de 500) — mesma lógica
-  // de correção aplicada em renderProdutosLeve, para esta marca específica.
-  const totalReal = await buscarTotalProdutosPeriodo(dataInicio, dataFim, lojaFil, marca);
-  const totalFat = totalReal.fat;
-  const totalQty = totalReal.qty;
+  const totalFat = produtos.reduce((s,p) => s + p.fat, 0);
+  const totalQty = produtos.reduce((s,p) => s + p.qty, 0);
 
   document.getElementById('prodPorMarcaTitulo').textContent = `${marca}`;
   document.getElementById('prodPorMarcaStats').textContent =
@@ -4030,10 +4004,9 @@ async function renderProdutosLeve() {
   const content = document.getElementById('prodContent');
 
   const tP = performance.now();
-  const [produtos, marcas, totalReal] = await Promise.all([
+  const [produtos, marcas] = await Promise.all([
     buscarRankingProdutos(dataInicio, dataFim, lojaFil, marcaFil, 500),
     buscarRankingMarcas(dataInicio, dataFim, lojaFil, 200),
-    buscarTotalProdutosPeriodo(dataInicio, dataFim, lojaFil, marcaFil),
   ]);
   console.log(`[perf] renderProdutosLeve fetch: ${Math.round(performance.now() - tP)}ms`);
 
@@ -4047,18 +4020,13 @@ async function renderProdutosLeve() {
   prodRankingExpanded  = false;
   marcaRankingExpanded = false;
 
-  // Usa o total REAL (sem limite de 500) vindo de fn_total_produtos_periodo.
-  // Antes, totalFat/totalQty eram a soma só dos produtos retornados pelo
-  // ranking (top 500), o que causava divergência em períodos com muitos
-  // produtos distintos. O ranking (lastSortedProd) continua limitado a 500
-  // para exibição, mas os cards agora mostram o valor correto do período.
-  const totalFat = totalReal.fat;
-  const totalQty = totalReal.qty;
+  const totalFat = lastSortedProd.reduce((s,[,d]) => s + d.fat, 0);
+  const totalQty = lastSortedProd.reduce((s,[,d]) => s + d.qty, 0);
 
   makeMetrics(document.getElementById('prodMetrics'), [
     { label: 'Faturamento total', value: fmt(totalFat) },
     { label: 'Itens vendidos', value: fmtNum(totalQty) },
-    { label: 'Produtos distintos', value: totalReal.distintos || lastSortedProd.length },
+    { label: 'Produtos distintos', value: lastSortedProd.length },
     { label: 'Marcas distintas', value: lastSortedMarca.length }
   ]);
 
@@ -4271,7 +4239,7 @@ function setProdMes() {
   const best = opts.find(o => o === ym) || opts[opts.length - 1] || '';
   selDE.value  = best;
   selATE.value = best;
-  renderProdutosLeve();
+  renderProdutos();
 }
 
 function setProdAno() {
@@ -4284,7 +4252,7 @@ function setProdAno() {
   const ate   = [...opts].reverse().find(o => o.startsWith(ano)) || opts[opts.length-1] || '';
   selDE.value  = deste;
   selATE.value = ate;
-  renderProdutosLeve();
+  renderProdutos();
 }
 
 function setProdTudo() {
