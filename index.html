@@ -626,7 +626,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
               <button class="apply-btn" onclick="exportFornecedorPDF()" style="border-color:var(--blue2);color:var(--blue2);display:flex;align-items:center;gap:6px;">
                 ↓ PDF Fornecedor
               </button>
-              <button class="apply-btn" onclick="document.getElementById('prodMarcaFilter').value='';renderProdutosMarca()">✕ Fechar</button>
+              <button class="apply-btn" onclick="document.getElementById('prodMarcaFilter').value='';renderProdutosMarcaLeve()">✕ Fechar</button>
             </div>
           </div>
           <div id="prodPorMarcaList"></div>
@@ -3103,12 +3103,16 @@ async function getOrCreateLojaId(nomeLoja) {
   if (!nomeLoja) nomeLoja = 'Loja não identificada';
   if (lojaIdCache[nomeLoja]) return lojaIdCache[nomeLoja];
 
-  // Procura na lista já carregada
-  let loja = todasLojasCadastro.find(l => l.nome === nomeLoja);
+  // Procura na lista já carregada — comparação SEM diferenciar maiúsculas/minúsculas,
+  // para não criar "DiTudo 20" e "diTudo 20" como lojas separadas.
+  const nomeLower = nomeLoja.toLowerCase();
+  let loja = todasLojasCadastro.find(l => l.nome.toLowerCase() === nomeLower);
   if (loja) { lojaIdCache[nomeLoja] = loja.id; return loja.id; }
 
-  // Não existe na lista local — verifica direto no banco antes de criar (evita duplicata)
-  const { data: existenteDB, error: errBusca } = await sb.from('lojas').select('id, nome, cor').eq('nome', nomeLoja).maybeSingle();
+  // Não existe na lista local — verifica direto no banco antes de criar (evita duplicata).
+  // ilike é case-insensitive; escapamos % e _ que têm significado especial em LIKE/ILIKE.
+  const nomeEscapado = nomeLoja.replace(/[%_]/g, c => '\\' + c);
+  const { data: existenteDB, error: errBusca } = await sb.from('lojas').select('id, nome, cor').ilike('nome', nomeEscapado).maybeSingle();
   if (errBusca) console.error(`[getOrCreateLojaId] Erro ao buscar loja "${nomeLoja}":`, errBusca);
   if (existenteDB) {
     todasLojasCadastro.push(existenteDB);
@@ -3322,7 +3326,8 @@ function limparRpcCache() { Object.keys(rpcCache).forEach(k => delete rpcCache[k
 // Resolve o loja_id (uuid) a partir do nome — usa o cadastro já carregado
 function lojaIdPorNome(nome) {
   if (!nome) return null;
-  const l = todasLojasCadastro.find(x => x.nome === nome);
+  const nomeLower = nome.toLowerCase();
+  const l = todasLojasCadastro.find(x => x.nome.toLowerCase() === nomeLower);
   return l ? l.id : null;
 }
 
@@ -4087,12 +4092,13 @@ async function renderProdutosLeve() {
   else document.getElementById('prodPorMarcaSection').style.display = 'none';
 }
 
+let mesesDisponiveisProdutosCache = [];
 async function populateProdMesSelectoresLeve() {
-  if (!mesesDisponiveisCache.length) {
-    const mesesDisp = await callRpc('fn_meses_disponiveis', {}, false);
-    mesesDisponiveisCache = mesesDisp.map(r => r.mes).filter(Boolean).sort();
+  if (!mesesDisponiveisProdutosCache.length) {
+    const mesesDisp = await callRpc('fn_meses_disponiveis_produtos', {}, false);
+    mesesDisponiveisProdutosCache = mesesDisp.map(r => r.mes).filter(Boolean).sort();
   }
-  const mesesUnicos = [...new Set(mesesDisponiveisCache.map(m => m.substring(0,7)))].sort();
+  const mesesUnicos = [...new Set(mesesDisponiveisProdutosCache.map(m => m.substring(0,7)))].sort();
   const mesLabel = ym => { const [y,m] = ym.split('-'); return new Date(+y,+m-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'}); };
   const selDE  = document.getElementById('prodMesAnoDE');
   const selATE = document.getElementById('prodMesAnoATE');
@@ -4207,7 +4213,7 @@ function renderProdutos() {
   const marcaSel = document.getElementById('prodMarcaFilter');
   const currentMarca = marcaSel.value;
   marcaSel.innerHTML = '<option value="">Selecione uma marca...</option>' + lastSortedMarca.map(([n]) => `<option value="${n}" ${n===currentMarca?'selected':''}>${n}</option>`).join('');
-  if (currentMarca) renderProdutosMarca();
+  if (currentMarca) renderProdutosMarcaLeve();
   else document.getElementById('prodPorMarcaSection').style.display = 'none';
 }
 
@@ -4239,7 +4245,7 @@ function setProdMes() {
   const best = opts.find(o => o === ym) || opts[opts.length - 1] || '';
   selDE.value  = best;
   selATE.value = best;
-  renderProdutos();
+  renderProdutosLeve();
 }
 
 function setProdAno() {
@@ -4252,7 +4258,7 @@ function setProdAno() {
   const ate   = [...opts].reverse().find(o => o.startsWith(ano)) || opts[opts.length-1] || '';
   selDE.value  = deste;
   selATE.value = ate;
-  renderProdutos();
+  renderProdutosLeve();
 }
 
 function setProdTudo() {
@@ -6356,6 +6362,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         await syncCatalogoParaSupabase(catalogoMarcas);
         salvarLocal();
         showToast(`Catálogo carregado — ${count} códigos mapeados`, 'success');
+        // A marca de cada produto agora é resolvida dinamicamente a partir do
+        // catálogo (via JOIN no banco), então um catálogo carregado depois dos
+        // relatórios de produtos já corrige a marca retroativamente — só
+        // precisa re-renderizar para refletir isso na tela.
+        if (document.getElementById('tab-produtos')?.classList.contains('active')) {
+          await renderProdutosLeve();
+        }
       } else {
         showToast('Catálogo sem dados. Verifique o arquivo.', 'error');
       }
@@ -6378,21 +6391,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         pending--;
         if (pending === 0) {
           if (!newRows.length) { showToast('Nenhum produto encontrado. Verifique o arquivo.', 'error'); return; }
-          // Substitui dados da loja — remove anteriores e insere novos
           const lojasNovas = [...new Set(newRows.map(r => r.loja))];
+          // Mantém prodData/IndexedDB como cache local de conveniência (compatibilidade),
+          // mas a fonte da verdade após o upload é sempre o Supabase — por isso
+          // invalidamos o cache de meses e re-renderizamos via renderProdutosLeve,
+          // que busca tudo de novo do banco. Isso evita a tela depender de dados
+          // que só existiam localmente nesta sessão/navegador.
           prodData = prodData.filter(r => !lojasNovas.includes(r.loja));
           prodData = prodData.concat(newRows);
-          const lojas = [...new Set(prodData.map(r => r.loja))].sort();
-          const sel = document.getElementById('prodLojaFilter');
-          sel.innerHTML = '<option value="">Todas as lojas</option>' + lojas.map(l => `<option value="${l}">${l}</option>`).join('');
-          populateProdMesSelectors(true);
-          document.getElementById('prodFileStatus').textContent = `✓ ${prodData.length} itens carregados`;
+          document.getElementById('prodFileStatus').textContent = `✓ ${newRows.length} itens no arquivo`;
           document.getElementById('prodFileStatus').style.color = 'var(--green)';
           showToast('Enviando para o servidor...', '');
           await syncProdutosParaSupabase(newRows);
           showToast(`${newRows.length} itens carregados — ${lojasNovas.join(', ')} atualizada`, 'success');
           salvarLocal();
-          renderProdutos();
+          mesesDisponiveisProdutosCache = []; // força reconsulta dos meses (o arquivo pode ter trazido meses novos)
+          document.getElementById('prodMesAnoDE').dataset.populated  = '';
+          document.getElementById('prodMesAnoATE').dataset.populated = '';
+          document.getElementById('prodLojaFilter').dataset.populated = ''; // pode ter criado loja nova
+          await populateProdMesSelectoresLeve();
+          await renderProdutosLeve();
         }
       };
       reader.readAsArrayBuffer(file);
