@@ -1533,7 +1533,7 @@ const chartDefaults = {
   }
 };
 
-function makeLojasRows(byLoja, container, allRows, uteisMes) {
+function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo) {
   const lojas = Object.keys(byLoja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
   container.innerHTML = '';
   if (!lojas.length) { container.innerHTML = '<div class="empty"><div class="empty-icon">📭</div>Sem dados para este período</div>'; return; }
@@ -1596,10 +1596,19 @@ function makeLojasRows(byLoja, container, allRows, uteisMes) {
     breakdown.style.cssText = 'display:none;margin-left:16px;';
 
     const tipoRows = ['DAV','NFCe'].map(tipo => {
-      const tipoData = (allRows || []).filter(r => r.loja === l && r.tipo === tipo);
-      if (!tipoData.length) return null;
-      const tipoFat = tipoData.reduce((s,r) => s + r.valor, 0);
-      const tipoQty = tipoData.length;
+      let tipoFat, tipoQty;
+      if (porTipo) {
+        // Dados já agregados por loja+tipo (vindo do banco via fn_faturamento_por_tipo)
+        const item = porTipo.find(r => r.loja === l && r.tipo === tipo);
+        if (!item || item.qty === 0) return null;
+        tipoFat = item.valor; tipoQty = item.qty;
+      } else {
+        // Fallback: filtra linha a linha (usado pela Visão Diária, que ainda
+        // trabalha com o array completo de vendas do dia)
+        const tipoData = (allRows || []).filter(r => r.loja === l && r.tipo === tipo);
+        if (!tipoData.length) return null;
+        tipoFat = tipoData.reduce((s,r) => s + r.valor, 0); tipoQty = tipoData.length;
+      }
       const tipoPct = d.fat > 0 ? (tipoFat/d.fat*100).toFixed(1) : '0.0';
       const tipoTicket = tipoQty > 0 ? tipoFat/tipoQty : 0;
       const tipoColor = tipo === 'NFCe' ? '#059669' : '#7C3AED';
@@ -1644,9 +1653,10 @@ async function renderDiarioLeve() {
   const lojaFil = document.getElementById('diarioLojaFilter')?.value || '';
 
   const tD = performance.now();
-  const [resumo, porHora] = await Promise.all([
+  const [resumo, porHora, porTipo] = await Promise.all([
     buscarResumoFaturamento(date, date, lojaFil),
     buscarVendasPorHora(date, lojaFil),
+    buscarFaturamentoPorTipo(date, date, lojaFil),
   ]);
   console.log(`[perf] renderDiarioLeve fetch: ${Math.round(performance.now() - tD)}ms`);
 
@@ -1665,7 +1675,7 @@ async function renderDiarioLeve() {
 
   const byLoja = {};
   comDados.forEach(r => { byLoja[r.loja] = { fat: r.fat, qty: r.qty }; });
-  makeLojasRows(byLoja, document.getElementById('diarioLojas'), null);
+  makeLojasRows(byLoja, document.getElementById('diarioLojas'), null, null, porTipo);
 
   const lojasSort = comDados.map(r => r.loja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
   const colors = lojasSort.map(l => lojaColorMap[l] || '#4F7EFF');
@@ -1854,10 +1864,11 @@ async function renderMensalLeve() {
   const ultimoDia = `${activeMonth}-${String(ultimoDiaNum).padStart(2,'0')}`;
 
   const tM = performance.now();
-  const [resumo, diario, porHora] = await Promise.all([
+  const [resumo, diario, porHora, porTipo] = await Promise.all([
     buscarResumoFaturamento(primeiroDia, ultimoDia, lojaFil),
     buscarFaturamentoDiario(primeiroDia, ultimoDia, lojaFil),
     buscarVendasPorHoraPeriodo(primeiroDia, ultimoDia, lojaFil),
+    buscarFaturamentoPorTipo(primeiroDia, ultimoDia, lojaFil),
   ]);
   console.log(`[perf] renderMensalLeve fetch: ${Math.round(performance.now() - tM)}ms`);
 
@@ -1898,7 +1909,7 @@ async function renderMensalLeve() {
     Object.entries(dias).forEach(([data, valor]) => allRowsSimulado.push({ loja, data, valor }));
   });
 
-  makeLojasRows(byLoja, document.getElementById('mensalLojas'), allRowsSimulado, uteisMes);
+  makeLojasRows(byLoja, document.getElementById('mensalLojas'), allRowsSimulado, uteisMes, porTipo);
 
   const lojasSort = comDados.map(r => r.loja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
   const colors = lojasSort.map(l => lojaColorMap[l] || '#4F7EFF');
@@ -3339,6 +3350,18 @@ async function buscarResumoFaturamento(dataInicio, dataFim, lojaNome) {
   return rows.map(r => ({
     loja: r.loja_nome, fat: parseFloat(r.faturamento), qty: parseInt(r.qtd_vendas),
     ticket: parseFloat(r.ticket_medio)
+  }));
+}
+
+// ── Faturamento por loja E por tipo de venda (DAV/NFCe) ─────────────────────
+// Usado no painel de detalhamento que abre ao clicar numa loja, tanto na
+// Visão Mensal quanto na Diária.
+async function buscarFaturamentoPorTipo(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_faturamento_por_tipo', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({
+    loja: r.loja_nome, tipo: r.tipo, valor: parseFloat(r.faturamento), qty: parseInt(r.qtd_vendas)
   }));
 }
 
