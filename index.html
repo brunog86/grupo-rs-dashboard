@@ -467,6 +467,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
   <div class="tabs">
     <button class="tab active" onclick="switchTab('diario', this)">Visão Diária</button>
     <button class="tab" onclick="switchTab('mensal', this)">Visão Mensal</button>
+    <button class="tab" onclick="switchTab('fatmeta', this)">🎯 Fat x Meta</button>
     <button class="tab" onclick="switchTab('vendedores', this)">Vendedores</button>
     <button class="tab" onclick="switchTab('produtos', this)">Produtos & Marcas</button>
     <button class="tab" onclick="switchTab('financeiro', this)">Financeiro</button>
@@ -517,6 +518,10 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <select class="date-input" id="mensalLojaFilter" onchange="renderMensalLeve()" style="min-width:160px">
           <option value="">Todas as lojas</option>
         </select>
+        <span style="flex:1"></span>
+        <button class="apply-btn" onclick="document.getElementById('metasFileInput').click()" style="border-color:var(--amber);color:var(--amber)">🎯 Metas por Loja</button>
+        <input type="file" id="metasFileInput" accept=".xls,.xlsx,.csv" style="display:none">
+        <span id="metasFileStatus" style="font-size:12px;color:var(--text2)">Não carregado</span>
       </div>
       <div class="month-selector" id="monthSelector"></div>
 
@@ -1058,6 +1063,55 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 
     </div>
 
+    <!-- FAT X META -->
+    <div class="tab-content" id="tab-fatmeta">
+
+      <!-- Filtros -->
+      <div class="filter-bar" style="margin-bottom:16px;">
+        <span class="filter-label">Mês/Ano:</span>
+        <select class="date-input" id="fatmetaMesSelect" onchange="onFatMetaMesChange()" style="min-width:180px"></select>
+        <span class="filter-label" style="margin-left:8px">Loja:</span>
+        <select class="date-input" id="fatmetaLojaFilter" onchange="renderFatMeta()" style="min-width:160px">
+          <option value="">Todas as lojas</option>
+        </select>
+      </div>
+
+      <div id="fatmetaNoData" class="empty" style="display:none">
+        <div class="empty-icon">🎯</div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:8px;color:var(--text)">Nenhuma meta cadastrada para este período</div>
+        <div style="font-size:13px;color:var(--text2);max-width:440px;margin:0 auto;line-height:1.6">
+          Carregue o arquivo de metas na aba <strong style="color:var(--amber)">Visão Mensal</strong> (botão "🎯 Metas por Loja") para ver o acompanhamento aqui.
+        </div>
+      </div>
+
+      <div id="fatmetaContent">
+        <!-- Gauge + cards principais -->
+        <div style="display:grid;grid-template-columns:280px 1fr;gap:24px;margin-bottom:28px;align-items:stretch;">
+          <div class="chart-card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;">
+            <div id="fatmetaGauge"></div>
+          </div>
+          <div class="metrics-grid" id="fatmetaMetrics" style="margin-bottom:0;"></div>
+        </div>
+
+        <!-- Por loja -->
+        <div class="section-title">Por loja</div>
+        <div id="fatmetaLojaGrid" style="margin-bottom:28px;"></div>
+
+        <!-- Gráfico: acumulado real vs ritmo necessário -->
+        <div class="chart-card full" style="margin-bottom:16px;">
+          <div class="chart-title">Faturamento acumulado × ritmo necessário para bater a meta</div>
+          <div class="chart-wrap tall"><canvas id="chartFatMetaAcumulado"></canvas></div>
+        </div>
+
+        <!-- Gráfico: necessário por dia (dias restantes) -->
+        <div class="chart-card full" style="margin-bottom:28px;">
+          <div class="chart-title">Quanto falta faturar por dia útil restante</div>
+          <div class="chart-wrap tall"><canvas id="chartFatMetaPorDia"></canvas></div>
+        </div>
+      </div>
+
+    </div>
+
     <!-- CONFIGURAÇÕES (somente admin) -->
     <div class="tab-content" id="tab-config">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
@@ -1095,6 +1149,7 @@ let currentUser   = null;  // { id, email }
 let currentPerfil = null;  // { id, nome, email, papel, ativo }
 let lojasPermitidas = [];  // array de nomes de loja que o usuário pode ver (vazio = todas, se admin)
 let mesesDisponiveisCache = [];
+let metasCache = {}; // cache simples de metas já buscadas, por chave "mesInicio|mesFim|loja"
 let todasLojasCadastro = []; // [{id, nome, cor}] vindas da tabela lojas
 
 function isAdmin()   { return currentPerfil?.papel === 'admin'; }
@@ -1533,7 +1588,7 @@ const chartDefaults = {
   }
 };
 
-function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo) {
+function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisRestantes) {
   const lojas = Object.keys(byLoja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
   container.innerHTML = '';
   if (!lojas.length) { container.innerHTML = '<div class="empty"><div class="empty-icon">📭</div>Sem dados para este período</div>'; return; }
@@ -1554,8 +1609,15 @@ function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo) {
           <div class="loja-metric-label">Média/dia</div>
           <div class="loja-metric-value" style="color:var(--blue2)">${fmt(mediaLoja)}</div>
         </div>`;
-        // Tendência usando dias úteis do mês ativo
-        if (uteisMes) {
+        // Tendência = faturamento atual da loja + (média/dia da loja × dias úteis restantes no mês)
+        if (uteisRestantes !== undefined && uteisRestantes !== null) {
+          const tendLoja = d.fat + mediaLoja * uteisRestantes;
+          tendenciaHTML = `<div class="loja-metric">
+            <div class="loja-metric-label">Tendência</div>
+            <div class="loja-metric-value" style="color:var(--green)">${fmt(tendLoja)}</div>
+          </div>`;
+        } else if (uteisMes) {
+          // Fallback antigo (Visão Diária não passa uteisRestantes — não usa este card)
           const tendLoja = mediaLoja * uteisMes;
           tendenciaHTML = `<div class="loja-metric">
             <div class="loja-metric-label">Tendência</div>
@@ -1809,6 +1871,33 @@ function diasUteisNoMes(ym) {
   return uteis;
 }
 
+// Conta quantos dias úteis (não-domingo) ainda restam no mês "ym", a partir de
+// HOJE (inclusive) até o fim do mês. Se o mês já terminou (ym é mês passado),
+// retorna 0 — não há mais dias a projetar. Se "ym" é um mês futuro, retorna o
+// total de dias úteis do mês inteiro (nenhum dia ainda ocorreu).
+// Usado para a Tendência: faturamento_atual + média/dia × dias_úteis_restantes
+// — em vez de média/dia × total_dias_úteis_do_mês, que conta os dias já
+// passados duas vezes (uma no "atual", outra na projeção).
+function diasUteisRestantesNoMes(ym) {
+  if (!ym) return 0;
+  const hoje = new Date();
+  const [y, m] = ym.split('-').map(Number);
+  const totalDias = new Date(y, m, 0).getDate();
+
+  const mesEhPassado = (y < hoje.getFullYear()) || (y === hoje.getFullYear() && m < hoje.getMonth() + 1);
+  if (mesEhPassado) return 0;
+
+  const mesEhFuturo = (y > hoje.getFullYear()) || (y === hoje.getFullYear() && m > hoje.getMonth() + 1);
+  const diaInicial = mesEhFuturo ? 1 : hoje.getDate(); // mês atual: conta a partir de hoje (inclusive)
+
+  let restantes = 0;
+  for (let d = diaInicial; d <= totalDias; d++) {
+    const dow = new Date(y, m - 1, d).getDay();
+    if (dow !== 0) restantes++; // exclui só domingo
+  }
+  return restantes;
+}
+
 async function renderMensalLeve() {
   // Usa o cache já carregado no login — evita recontar 'distinct month' a cada clique.
   // Só rebusca se o cache estiver vazio (ex: depois de um novo upload de arquivo).
@@ -1864,11 +1953,12 @@ async function renderMensalLeve() {
   const ultimoDia = `${activeMonth}-${String(ultimoDiaNum).padStart(2,'0')}`;
 
   const tM = performance.now();
-  const [resumo, diario, porHora, porTipo] = await Promise.all([
+  const [resumo, diario, porHora, porTipo, metas] = await Promise.all([
     buscarResumoFaturamento(primeiroDia, ultimoDia, lojaFil),
     buscarFaturamentoDiario(primeiroDia, ultimoDia, lojaFil),
     buscarVendasPorHoraPeriodo(primeiroDia, ultimoDia, lojaFil),
     buscarFaturamentoPorTipo(primeiroDia, ultimoDia, lojaFil),
+    buscarMetasPeriodo(primeiroDia, primeiroDia, lojaFil),
   ]);
   console.log(`[perf] renderMensalLeve fetch: ${Math.round(performance.now() - tM)}ms`);
 
@@ -1885,18 +1975,38 @@ async function renderMensalLeve() {
   const mediaDiaria = diasComFat.length > 0 ? totalFat / diasComFat.length : 0;
 
   const uteisMes = diasUteisNoMes(activeMonth);
-  const tendencia = mediaDiaria * uteisMes;
+  const uteisRestantes = diasUteisRestantesNoMes(activeMonth);
+  // Tendência = o que já faturou + (média/dia projetada para os dias úteis que
+  // ainda faltam no mês). Antes era média/dia × total de dias úteis do mês,
+  // o que contava os dias já passados duas vezes (uma no faturamento atual,
+  // outra de novo multiplicada na projeção).
+  const tendencia = totalFat + mediaDiaria * uteisRestantes;
 
-  makeMetrics(document.getElementById('mensalMetrics'), [
+  const metaTotal = metas.reduce((s,m) => s + m.valor, 0);
+  const metaPct = metaTotal > 0 ? (totalFat / metaTotal * 100) : null;
+
+  const metricasMensal = [
     { label: 'Faturamento do mês', value: fmt(totalFat), sub: `Média/dia: ${fmt(mediaDiaria)}`, cls: 'neutral' },
     { label: `Tendência (${uteisMes} d.u.)`, value: fmt(tendencia), sub: tendencia > totalFat ? `▲ ${fmt(tendencia - totalFat)} acima do atual` : `▼ ${fmt(totalFat - tendencia)} abaixo do projetado`, cls: tendencia >= totalFat ? 'up' : 'neutral' },
     { label: 'Total de vendas', value: fmtNum(totalQty) },
     { label: 'Ticket médio', value: fmt(ticket) },
     { label: 'Lojas ativas', value: comDados.length }
-  ]);
+  ];
+  if (metaTotal > 0) {
+    metricasMensal.push({
+      label: 'Meta do mês', value: fmt(metaTotal),
+      sub: `${metaPct.toFixed(1).replace('.',',')}% atingido`,
+      cls: metaPct >= 100 ? 'up' : 'neutral'
+    });
+  }
+  makeMetrics(document.getElementById('mensalMetrics'), metricasMensal);
 
   const byLoja = {};
   comDados.forEach(r => { byLoja[r.loja] = { fat: r.fat, qty: r.qty }; });
+
+  // Meta por loja (mapa simples loja -> valor da meta do mês ativo)
+  const metaPorLoja = {};
+  metas.forEach(m => { metaPorLoja[m.loja] = (metaPorLoja[m.loja] || 0) + m.valor; });
 
   // Média/dia e tendência por loja, calculados a partir da série diária por loja
   const diarioPorLoja = {};
@@ -1909,7 +2019,7 @@ async function renderMensalLeve() {
     Object.entries(dias).forEach(([data, valor]) => allRowsSimulado.push({ loja, data, valor }));
   });
 
-  makeLojasRows(byLoja, document.getElementById('mensalLojas'), allRowsSimulado, uteisMes, porTipo);
+  makeLojasRows(byLoja, document.getElementById('mensalLojas'), allRowsSimulado, uteisMes, porTipo, uteisRestantes, metaPorLoja);
 
   const lojasSort = comDados.map(r => r.loja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
   const colors = lojasSort.map(l => lojaColorMap[l] || '#4F7EFF');
@@ -3302,6 +3412,35 @@ async function syncCatalogoParaSupabase(catalogo) {
   }
 }
 
+// ── Envia metas por loja para o Supabase ────────────────────────────────────
+// A planilha de metas sempre vem completa (todos os meses, de uma só vez) —
+// não é um upload incremental. Por isso, ao carregar um novo arquivo de
+// metas, apagamos TODAS as metas das lojas presentes no arquivo antes de
+// inserir as novas, em vez de só sobrescrever mês a mês — mesmo padrão usado
+// no upload de produtos: um upload novo sempre substitui por completo os
+// dados anteriores daquela loja, evitando meses órfãos ou duplicados.
+async function syncMetasParaSupabase(rows) {
+  if (!rows.length) return;
+  const lojasNovas = [...new Set(rows.map(r => r.loja))];
+
+  for (const nomeLoja of lojasNovas) {
+    const lojaId = await getOrCreateLojaId(nomeLoja);
+    if (!lojaId) continue;
+
+    await sb.from('metas').delete().eq('loja_id', lojaId);
+
+    const rowsDaLoja = rows.filter(r => r.loja === nomeLoja);
+    const payload = rowsDaLoja.map(r => ({
+      loja_id: lojaId, mes: `${r.mesAno}-01`, valor: r.valor
+    }));
+    for (let i = 0; i < payload.length; i += 500) {
+      const lote = payload.slice(i, i + 500);
+      const { error } = await sb.from('metas').insert(lote);
+      if (error) console.error('Erro ao sincronizar metas:', error);
+    }
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // BUSCA SOB DEMANDA (RPC) — substitui o carregamento de "tudo de uma vez"
 // As funções SQL fazem o cálculo pesado no banco; aqui só pedimos o resultado.
@@ -3362,6 +3501,16 @@ async function buscarFaturamentoPorTipo(dataInicio, dataFim, lojaNome) {
   }, false);
   return rows.map(r => ({
     loja: r.loja_nome, tipo: r.tipo, valor: parseFloat(r.faturamento), qty: parseInt(r.qtd_vendas)
+  }));
+}
+
+// ── Metas de faturamento por loja em um intervalo de meses ──────────────────
+async function buscarMetasPeriodo(mesInicio, mesFim, lojaNome) {
+  const rows = await callRpc('fn_metas_periodo', {
+    p_mes_inicio: mesInicio, p_mes_fim: mesFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({
+    loja: r.loja_nome, mes: r.mes, valor: parseFloat(r.valor)
   }));
 }
 
@@ -3720,6 +3869,58 @@ function parseCatalogo(arrayBuffer) {
     }
     return count;
   } catch(e) { console.error('parseCatalogo error:', e); return 0; }
+}
+
+// Mapa de siglas usadas na planilha de metas para o nome completo da loja
+// cadastrado no sistema. Ajustar aqui se novas siglas/lojas forem usadas.
+const SIGLA_PARA_LOJA = {
+  'AM1': 'América Import L1',
+  'AM2': 'América Import L2',
+  'DT':  'DiTudo 20',
+  'VKT': 'Vem Ki Tem',
+};
+
+// Planilha de metas: cabeçalho "METAS POR LOJA | AM1 | AM2 | DT | VKT...",
+// linhas seguintes "data (1º dia do mês) | meta loja1 | meta loja2 | ...".
+// Retorna [{ loja, mesAno, valor }] — um item por loja por mês com meta > 0.
+function parseMetas(arrayBuffer) {
+  try {
+    const wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    if (!aoa.length) return [];
+
+    const header = aoa[0];
+    // Coluna 0 é o rótulo ("METAS POR LOJA"), colunas seguintes são as siglas das lojas
+    const colunas = [];
+    for (let c = 1; c < header.length; c++) {
+      const sigla = String(header[c] || '').trim().toUpperCase();
+      if (!sigla) continue;
+      const lojaNome = SIGLA_PARA_LOJA[sigla] || sigla; // se a sigla não estiver mapeada, usa ela mesma
+      colunas.push({ idx: c, loja: lojaNome });
+    }
+
+    const rows = [];
+    for (let i = 1; i < aoa.length; i++) {
+      const row = aoa[i];
+      let dataCell = row[0];
+      let mesAno;
+      if (dataCell instanceof Date) {
+        mesAno = `${dataCell.getFullYear()}-${String(dataCell.getMonth()+1).padStart(2,'0')}`;
+      } else if (typeof dataCell === 'string' && dataCell.includes('-')) {
+        mesAno = dataCell.substring(0, 7);
+      } else {
+        continue; // linha sem data válida — ignora
+      }
+      colunas.forEach(({ idx, loja }) => {
+        const valor = parseFloat(row[idx]);
+        if (!isNaN(valor) && valor > 0) {
+          rows.push({ loja, mesAno, valor });
+        }
+      });
+    }
+    return rows;
+  } catch(e) { console.error('parseMetas error:', e); return []; }
 }
 
 function parseSheetProdutos(aoa, lojaName) {
@@ -5814,6 +6015,263 @@ async function renderEvolucaoLeve() {
   });
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// FAT X META — acompanhamento de faturamento contra a meta cadastrada
+// ════════════════════════════════════════════════════════════════════════════
+
+let fatMetaActiveMonth = null; // mês selecionado nesta aba (YYYY-MM), independente do mês da Visão Mensal
+
+function onFatMetaMesChange() {
+  fatMetaActiveMonth = document.getElementById('fatmetaMesSelect').value;
+  renderFatMeta();
+}
+
+// Desenha um gauge (medidor semicircular) em SVG mostrando o % atingido da meta.
+// Cores: vermelho <60%, âmbar 60–99%, verde >=100%.
+function desenharGaugeMeta(pct) {
+  const pctClamp = Math.max(0, Math.min(pct, 130)); // limita visualmente em 130% pra não estourar o arco
+  const corFor = p => p >= 100 ? '#059669' : p >= 60 ? '#D97706' : '#DC2626';
+  const cor = corFor(pct);
+  const raio = 90, cx = 110, cy = 110;
+  const anguloMax = 180; // semicírculo
+  const anguloAtual = Math.min(pct, 130) / 130 * anguloMax;
+  const polarToXY = (ang) => {
+    const rad = ang * Math.PI / 180;
+    return [cx - raio * Math.cos(rad), cy - raio * Math.sin(rad)];
+  };
+  // Arco de fundo (cinza, 0 a 180°) e arco de progresso (0 a anguloAtual)
+  const [x0,y0] = [cx - raio, cy];
+  const [x1,y1] = [cx + raio, cy];
+  const [xp,yp] = polarToXY(anguloAtual);
+  const largeArcProgresso = anguloAtual > 180 ? 1 : 0;
+  return `
+    <svg viewBox="0 0 220 140" width="240" height="150">
+      <path d="M ${x0} ${y0} A ${raio} ${raio} 0 0 1 ${x1} ${y1}" fill="none" stroke="var(--border)" stroke-width="18" stroke-linecap="round"/>
+      <path d="M ${x0} ${y0} A ${raio} ${raio} 0 ${largeArcProgresso} 1 ${xp} ${yp}" fill="none" stroke="${cor}" stroke-width="18" stroke-linecap="round"/>
+      <text x="${cx}" y="${cy-8}" text-anchor="middle" font-size="32" font-weight="800" fill="${cor}" font-family="Plus Jakarta Sans, sans-serif">${pct.toFixed(1).replace('.',',')}%</text>
+      <text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="12" fill="var(--text2)" font-family="DM Sans, sans-serif">da meta atingida</text>
+    </svg>`;
+}
+
+async function renderFatMeta() {
+  if (!mesesDisponiveisCache.length) {
+    const mesesDisp = await callRpc('fn_meses_disponiveis', {}, false);
+    mesesDisponiveisCache = mesesDisp.map(r => r.mes).filter(Boolean).sort();
+  }
+  if (!fatMetaActiveMonth && mesesDisponiveisCache.length) {
+    fatMetaActiveMonth = mesesDisponiveisCache[mesesDisponiveisCache.length - 1].substring(0,7);
+  }
+  const mesesUnicos = [...new Set(mesesDisponiveisCache.map(m => m.substring(0,7)))].sort();
+  if (fatMetaActiveMonth && mesesUnicos.length && !mesesUnicos.includes(fatMetaActiveMonth)) {
+    fatMetaActiveMonth = mesesUnicos[mesesUnicos.length - 1];
+  }
+
+  const mesSelect = document.getElementById('fatmetaMesSelect');
+  if (mesSelect) {
+    mesSelect.innerHTML = mesesUnicos.map(m => {
+      const [y, mo] = m.split('-');
+      const label = new Date(parseInt(y), parseInt(mo)-1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+      return `<option value="${m}" ${m === fatMetaActiveMonth ? 'selected' : ''}>${label}</option>`;
+    }).join('');
+  }
+  const lojaSelect = document.getElementById('fatmetaLojaFilter');
+  if (lojaSelect && !lojaSelect.dataset.populated) {
+    const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+    lojaSelect.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+    lojaSelect.dataset.populated = '1';
+  }
+
+  const noData = document.getElementById('fatmetaNoData');
+  const content = document.getElementById('fatmetaContent');
+  if (!fatMetaActiveMonth) { noData.style.display = 'block'; content.style.display = 'none'; return; }
+
+  const lojaFil = document.getElementById('fatmetaLojaFilter')?.value || '';
+  const primeiroDia = `${fatMetaActiveMonth}-01`;
+  const [y, m] = fatMetaActiveMonth.split('-').map(Number);
+  const ultimoDiaNum = new Date(y, m, 0).getDate();
+  const ultimoDia = `${fatMetaActiveMonth}-${String(ultimoDiaNum).padStart(2,'0')}`;
+
+  const [resumo, diario, metas] = await Promise.all([
+    buscarResumoFaturamento(primeiroDia, ultimoDia, lojaFil),
+    buscarFaturamentoDiario(primeiroDia, ultimoDia, lojaFil),
+    buscarMetasPeriodo(primeiroDia, primeiroDia, lojaFil),
+  ]);
+
+  const metaTotal = metas.reduce((s,m) => s + m.valor, 0);
+  if (metaTotal === 0) { noData.style.display = 'block'; content.style.display = 'none'; return; }
+  noData.style.display = 'none'; content.style.display = 'block';
+
+  const comDados = resumo.filter(r => r.qty > 0);
+  const totalFat = comDados.reduce((s,r) => s + r.fat, 0);
+  const pctAtingido = metaTotal > 0 ? (totalFat / metaTotal * 100) : 0;
+  const faltaValor = Math.max(metaTotal - totalFat, 0);
+
+  // Dias úteis restantes (a partir de hoje, ou do mês inteiro se for mês futuro,
+  // ou zero se o mês já encerrou) — mesma lógica usada na Tendência da Visão Mensal.
+  const uteisRestantes = diasUteisRestantesNoMes(fatMetaActiveMonth);
+  // Quanto falta faturar POR DIA ÚTIL restante para bater a meta:
+  // (meta - já faturado) / dias úteis que ainda restam no mês.
+  // Se não houver mais dias úteis (mês encerrado) e a meta não foi batida,
+  // mostra null — não há mais como distribuir o valor que falta em dias futuros.
+  const necessarioPorDia = uteisRestantes > 0 ? faltaValor / uteisRestantes : null;
+
+  document.getElementById('fatmetaGauge').innerHTML = desenharGaugeMeta(pctAtingido);
+
+  const metricas = [
+    { label: 'Faturamento do mês', value: fmt(totalFat), cls: 'neutral' },
+    { label: 'Meta do mês', value: fmt(metaTotal), cls: 'neutral' },
+    { label: 'Falta para a meta', value: fmt(faltaValor), cls: faltaValor > 0 ? 'down' : 'up' },
+  ];
+  if (necessarioPorDia !== null) {
+    metricas.push({
+      label: `Necessário/dia útil (${uteisRestantes} restantes)`,
+      value: fmt(necessarioPorDia),
+      sub: faltaValor === 0 ? 'Meta já atingida!' : null,
+      cls: 'neutral'
+    });
+  } else if (faltaValor === 0) {
+    metricas.push({ label: 'Status', value: '✓ Meta atingida', cls: 'up' });
+  } else {
+    metricas.push({ label: 'Status', value: 'Mês encerrado sem atingir', cls: 'down' });
+  }
+  makeMetrics(document.getElementById('fatmetaMetrics'), metricas);
+
+  // ── Por loja ──────────────────────────────────────────────────────────────
+  const fatPorLoja = {};
+  comDados.forEach(r => { fatPorLoja[r.loja] = r.fat; });
+  const metaPorLoja = {};
+  metas.forEach(m => { metaPorLoja[m.loja] = (metaPorLoja[m.loja] || 0) + m.valor; });
+
+  const lojasComMeta = [...new Set([...Object.keys(fatPorLoja), ...Object.keys(metaPorLoja)])]
+    .filter(l => metaPorLoja[l] > 0)
+    .sort((a,b) => (metaPorLoja[b]||0) - (metaPorLoja[a]||0));
+
+  const lojaGrid = document.getElementById('fatmetaLojaGrid');
+  lojaGrid.innerHTML = '';
+  lojasComMeta.forEach(loja => {
+    const fatLoja = fatPorLoja[loja] || 0;
+    const metaLoja = metaPorLoja[loja] || 0;
+    const pctLoja = metaLoja > 0 ? (fatLoja / metaLoja * 100) : 0;
+    const faltaLoja = Math.max(metaLoja - fatLoja, 0);
+    const necLoja = uteisRestantes > 0 ? faltaLoja / uteisRestantes : null;
+    const color = lojaColorMap[loja] || '#4F7EFF';
+    const corPct = pctLoja >= 100 ? 'var(--green)' : pctLoja >= 60 ? 'var(--amber)' : 'var(--red)';
+    const row = document.createElement('div');
+    row.style.cssText = `
+      background:var(--bg3); border:1px solid var(--border);
+      border-left:3px solid ${color}; border-radius:var(--radius);
+      padding:14px 18px; display:grid;
+      grid-template-columns:180px 1fr 1fr 1fr 1fr 1fr;
+      align-items:center; gap:14px; margin-bottom:10px;
+    `;
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:14px">
+        <div style="width:10px;height:10px;border-radius:3px;background:${color};flex-shrink:0"></div>${loja}
+      </div>
+      <div>
+        <div class="loja-metric-label">Faturamento</div>
+        <div class="loja-metric-value" style="color:${color}">${fmt(fatLoja)}</div>
+      </div>
+      <div>
+        <div class="loja-metric-label">Meta</div>
+        <div class="loja-metric-value">${fmt(metaLoja)}</div>
+      </div>
+      <div>
+        <div class="loja-metric-label">% atingido</div>
+        <div class="loja-metric-value" style="color:${corPct}">${pctLoja.toFixed(1).replace('.',',')}%</div>
+      </div>
+      <div>
+        <div class="loja-metric-label">Falta</div>
+        <div class="loja-metric-value" style="color:${faltaLoja>0?'var(--red)':'var(--green)'}">${fmt(faltaLoja)}</div>
+      </div>
+      <div>
+        <div class="loja-metric-label">Necessário/dia</div>
+        <div class="loja-metric-value">${necLoja !== null ? fmt(necLoja) : '—'}</div>
+      </div>`;
+    lojaGrid.appendChild(row);
+  });
+
+  // ── Gráfico: acumulado real × ritmo necessário (linha de meta linearizada) ─
+  const diasMap = {};
+  diario.forEach(r => { diasMap[r.data] = (diasMap[r.data] || 0) + r.valor; });
+  const diasDoMes = [];
+  for (let d = 1; d <= ultimoDiaNum; d++) {
+    diasDoMes.push(`${fatMetaActiveMonth}-${String(d).padStart(2,'0')}`);
+  }
+  let acumulado = 0;
+  const acumuladoSerie = diasDoMes.map(dia => {
+    acumulado += (diasMap[dia] || 0);
+    return acumulado;
+  });
+  // Linha de "ritmo necessário": uma reta de 0 até a meta, distribuída pelos
+  // dias úteis do mês inteiro (não-domingo) — mostra o ritmo ideal constante.
+  let acumNecessario = 0;
+  const diasUteisDoMesArr = diasDoMes.filter(dia => new Date(dia+'T00:00:00').getDay() !== 0);
+  const valorPorDiaUtilIdeal = diasUteisDoMesArr.length > 0 ? metaTotal / diasUteisDoMesArr.length : 0;
+  const ritmoSerie = diasDoMes.map(dia => {
+    if (new Date(dia+'T00:00:00').getDay() !== 0) acumNecessario += valorPorDiaUtilIdeal;
+    return acumNecessario;
+  });
+
+  const labels = diasDoMes.map(d => d.substring(8,10));
+
+  destroyChart('fatmetaAcumulado'); destroyChart('fatmetaPorDia');
+
+  const baseOptsFM = {
+    ...chartDefaults,
+    plugins: { ...chartDefaults.plugins, legend: { display: true, position: 'top', labels: { color: 'var(--text2)', font: { family: 'Plus Jakarta Sans', size: 11 }, padding: 14, boxWidth: 12 } } },
+    scales: {
+      x: { ...chartDefaults.scales.x, ticks: { ...chartDefaults.scales.x.ticks, maxRotation: 0 } },
+      y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } }
+    }
+  };
+
+  const ctxAcum = document.getElementById('chartFatMetaAcumulado').getContext('2d');
+  charts['fatmetaAcumulado'] = new Chart(ctxAcum, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Faturamento acumulado', data: acumuladoSerie, borderColor: '#2563EB', backgroundColor: 'rgba(37,99,235,0.08)', tension: 0.3, fill: true, pointRadius: 0, borderWidth: 2.5 },
+        { label: 'Ritmo necessário (meta linear)', data: ritmoSerie, borderColor: '#D97706', backgroundColor: 'transparent', borderDash: [6,4], tension: 0, fill: false, pointRadius: 0, borderWidth: 2 },
+        { label: 'Meta do mês', data: diasDoMes.map(() => metaTotal), borderColor: '#059669', backgroundColor: 'transparent', borderDash: [2,3], tension: 0, fill: false, pointRadius: 0, borderWidth: 1.5 },
+      ]
+    },
+    options: baseOptsFM
+  });
+
+  // ── Gráfico: quanto falta por dia restante, recalculado dia a dia ─────────
+  // Para cada dia útil restante (a partir de hoje), mostra o valor necessário
+  // POR DIA se a distribuição fosse igual entre os dias úteis que ainda faltam
+  // a partir daquele ponto — ou seja, replica a régua "necessário/dia" mas
+  // mês adentro, dia a dia, considerando o quanto já foi faturado até ali.
+  const hoje = new Date();
+  const hojeStr = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+  const diasFuturos = diasDoMes.filter(d => d >= hojeStr && new Date(d+'T00:00:00').getDay() !== 0);
+  const necessarioPorDiaSerie = diasFuturos.map((diaAlvo, idx) => {
+    const diasRestantesNoPonto = diasFuturos.length - idx;
+    const idxNoMes = diasDoMes.indexOf(diaAlvo);
+    const acumuladoAteAli = idxNoMes > 0 ? acumuladoSerie[idxNoMes - 1] : 0; // faturado até o dia anterior
+    const faltaNoPonto = Math.max(metaTotal - acumuladoAteAli, 0);
+    return diasRestantesNoPonto > 0 ? faltaNoPonto / diasRestantesNoPonto : 0;
+  });
+  const labelsFuturos = diasFuturos.map(d => d.substring(8,10));
+
+  const ctxPorDia = document.getElementById('chartFatMetaPorDia').getContext('2d');
+  charts['fatmetaPorDia'] = new Chart(ctxPorDia, {
+    type: 'bar',
+    data: {
+      labels: labelsFuturos.length ? labelsFuturos : ['—'],
+      datasets: [{
+        label: 'Necessário faturar nesse dia',
+        data: labelsFuturos.length ? necessarioPorDiaSerie : [0],
+        backgroundColor: 'rgba(217,119,6,0.75)', borderRadius: 5, borderSkipped: false
+      }]
+    },
+    options: { ...baseOptsFM, plugins: { ...baseOptsFM.plugins, legend: { display: false } } }
+  });
+}
+
 
 let pgtoData = []; // vendas com forma de pagamento
 
@@ -6377,6 +6835,7 @@ function switchTab(name, btn) {
   if (name === 'pagamentos')  renderPagamentosLeve();
   if (name === 'analise')     renderAnaliseLeve();
   if (name === 'evolucao')    renderEvolucaoLeve();
+  if (name === 'fatmeta')     renderFatMeta();
   if (name === 'config')      carregarListaUsuarios();
 }
 
@@ -6422,6 +6881,35 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       } else {
         showToast('Catálogo sem dados. Verifique o arquivo.', 'error');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  });
+
+  document.getElementById('metasFileInput').addEventListener('change', e => {
+    if (!podeEscrever()) { showToast('Seu perfil não tem permissão para carregar arquivos.', 'error'); return; }
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async ev => {
+      const rows = parseMetas(ev.target.result);
+      if (rows.length > 0) {
+        const lojas = [...new Set(rows.map(r => r.loja))];
+        document.getElementById('metasFileStatus').textContent = `✓ ${rows.length} metas no arquivo`;
+        document.getElementById('metasFileStatus').style.color = 'var(--green)';
+        showToast('Enviando para o servidor...', '');
+        await syncMetasParaSupabase(rows);
+        showToast(`Metas carregadas — ${lojas.join(', ')} atualizada(s)`, 'success');
+        metasCache = {}; // invalida cache local de metas, força reconsulta
+        if (document.getElementById('tab-mensal')?.classList.contains('active')) {
+          await renderMensalLeve();
+        }
+        if (document.getElementById('tab-diario')?.classList.contains('active')) {
+          await renderDiarioLeve();
+        }
+      } else {
+        showToast('Nenhuma meta encontrada. Verifique o arquivo.', 'error');
       }
     };
     reader.readAsArrayBuffer(file);
