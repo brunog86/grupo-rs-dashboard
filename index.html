@@ -1098,15 +1098,9 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <div id="fatmetaLojaGrid" style="margin-bottom:28px;"></div>
 
         <!-- Gráfico: acumulado real vs ritmo necessário -->
-        <div class="chart-card full" style="margin-bottom:16px;">
+        <div class="chart-card full" style="margin-bottom:28px;">
           <div class="chart-title">Faturamento acumulado × ritmo necessário para bater a meta</div>
           <div class="chart-wrap tall"><canvas id="chartFatMetaAcumulado"></canvas></div>
-        </div>
-
-        <!-- Gráfico: necessário por dia (dias restantes) -->
-        <div class="chart-card full" style="margin-bottom:28px;">
-          <div class="chart-title">Quanto falta faturar por dia útil restante</div>
-          <div class="chart-wrap tall"><canvas id="chartFatMetaPorDia"></canvas></div>
         </div>
       </div>
 
@@ -1653,27 +1647,51 @@ function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisResta
     row.style.cursor = 'pointer';
     row.title = 'Clique para ver DAV × NFCe';
 
-    // DAV vs NFCe breakdown panel
+    // Breakdown por tipo de venda — dinâmico: mostra qualquer tipo que exista
+    // nos dados, não uma lista fixa. Regra de agrupamento: NFCe e NFe são
+    // exibidas juntas como "F1" (documento fiscal); DAV continua separado.
+    // No fallback (Visão Diária, que ainda lê linha a linha do allRows), essa
+    // normalização precisa ser aplicada aqui — quando os dados vêm do banco
+    // via fn_faturamento_por_tipo, o agrupamento já chega pronto.
     const breakdown = document.createElement('div');
     breakdown.style.cssText = 'display:none;margin-left:16px;';
 
-    const tipoRows = ['DAV','NFCe'].map(tipo => {
+    const normalizaTipo = (tipo) => (tipo === 'NFCe' || tipo === 'NFe') ? 'F1' : tipo;
+    const CORES_TIPO = { 'F1': '#059669', 'DAV': '#7C3AED' };
+    const corParaTipo = (tipo, idx) => CORES_TIPO[tipo] || ['#DB2777','#D97706','#0891B2','#65A30D'][idx % 4];
+
+    let tiposDisponiveis;
+    if (porTipo) {
+      tiposDisponiveis = [...new Set(porTipo.filter(r => r.loja === l).map(r => r.tipo))];
+    } else {
+      tiposDisponiveis = [...new Set((allRows || []).filter(r => r.loja === l).map(r => normalizaTipo(r.tipo)).filter(Boolean))];
+    }
+    // Ordena com DAV e F1 primeiro (mais comuns), depois o resto em ordem alfabética
+    const ordemPreferida = ['DAV', 'F1'];
+    tiposDisponiveis.sort((a, b) => {
+      const ia = ordemPreferida.indexOf(a), ib = ordemPreferida.indexOf(b);
+      if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      return a.localeCompare(b);
+    });
+
+    const tipoRows = tiposDisponiveis.map((tipo, idx) => {
       let tipoFat, tipoQty;
       if (porTipo) {
-        // Dados já agregados por loja+tipo (vindo do banco via fn_faturamento_por_tipo)
+        // Dados já agregados por loja+tipo (vindo do banco via fn_faturamento_por_tipo,
+        // que já entrega NFCe/NFe agrupadas como "F1")
         const item = porTipo.find(r => r.loja === l && r.tipo === tipo);
         if (!item || item.qty === 0) return null;
         tipoFat = item.valor; tipoQty = item.qty;
       } else {
-        // Fallback: filtra linha a linha (usado pela Visão Diária, que ainda
-        // trabalha com o array completo de vendas do dia)
-        const tipoData = (allRows || []).filter(r => r.loja === l && r.tipo === tipo);
+        // Fallback: filtra linha a linha (usado pela Visão Diária), agrupando
+        // NFCe/NFe sob "F1" do mesmo jeito que a função do banco faz
+        const tipoData = (allRows || []).filter(r => r.loja === l && normalizaTipo(r.tipo) === tipo);
         if (!tipoData.length) return null;
         tipoFat = tipoData.reduce((s,r) => s + r.valor, 0); tipoQty = tipoData.length;
       }
       const tipoPct = d.fat > 0 ? (tipoFat/d.fat*100).toFixed(1) : '0.0';
       const tipoTicket = tipoQty > 0 ? tipoFat/tipoQty : 0;
-      const tipoColor = tipo === 'NFCe' ? '#059669' : '#7C3AED';
+      const tipoColor = corParaTipo(tipo, idx);
       return `
         <div style="background:var(--bg3);border:1px solid var(--border);border-left:3px solid ${tipoColor};
           border-radius:var(--radius-sm);padding:10px 16px;margin-bottom:4px;
@@ -6215,7 +6233,7 @@ async function renderFatMeta() {
 
   const labels = diasDoMes.map(d => d.substring(8,10));
 
-  destroyChart('fatmetaAcumulado'); destroyChart('fatmetaPorDia');
+  destroyChart('fatmetaAcumulado');
 
   const baseOptsFM = {
     ...chartDefaults,
@@ -6238,37 +6256,6 @@ async function renderFatMeta() {
       ]
     },
     options: baseOptsFM
-  });
-
-  // ── Gráfico: quanto falta por dia restante, recalculado dia a dia ─────────
-  // Para cada dia útil restante (a partir de hoje), mostra o valor necessário
-  // POR DIA se a distribuição fosse igual entre os dias úteis que ainda faltam
-  // a partir daquele ponto — ou seja, replica a régua "necessário/dia" mas
-  // mês adentro, dia a dia, considerando o quanto já foi faturado até ali.
-  const hoje = new Date();
-  const hojeStr = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
-  const diasFuturos = diasDoMes.filter(d => d >= hojeStr && new Date(d+'T00:00:00').getDay() !== 0);
-  const necessarioPorDiaSerie = diasFuturos.map((diaAlvo, idx) => {
-    const diasRestantesNoPonto = diasFuturos.length - idx;
-    const idxNoMes = diasDoMes.indexOf(diaAlvo);
-    const acumuladoAteAli = idxNoMes > 0 ? acumuladoSerie[idxNoMes - 1] : 0; // faturado até o dia anterior
-    const faltaNoPonto = Math.max(metaTotal - acumuladoAteAli, 0);
-    return diasRestantesNoPonto > 0 ? faltaNoPonto / diasRestantesNoPonto : 0;
-  });
-  const labelsFuturos = diasFuturos.map(d => d.substring(8,10));
-
-  const ctxPorDia = document.getElementById('chartFatMetaPorDia').getContext('2d');
-  charts['fatmetaPorDia'] = new Chart(ctxPorDia, {
-    type: 'bar',
-    data: {
-      labels: labelsFuturos.length ? labelsFuturos : ['—'],
-      datasets: [{
-        label: 'Necessário faturar nesse dia',
-        data: labelsFuturos.length ? necessarioPorDiaSerie : [0],
-        backgroundColor: 'rgba(217,119,6,0.75)', borderRadius: 5, borderSkipped: false
-      }]
-    },
-    options: { ...baseOptsFM, plugins: { ...baseOptsFM.plugins, legend: { display: false } } }
   });
 }
 
