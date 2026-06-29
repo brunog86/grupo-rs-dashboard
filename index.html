@@ -3419,13 +3419,18 @@ async function syncProdutosParaSupabase(rows) {
     const lojaId = await getOrCreateLojaId(nomeLoja);
     if (!lojaId) continue;
     const rowsDaLoja = rows.filter(r => r.loja === nomeLoja);
-    const datasAfetadas = [...new Set(rowsDaLoja.map(r => r.data))].filter(Boolean);
 
-    if (datasAfetadas.length) {
-      await sb.from('produtos_vendidos').delete().eq('loja_id', lojaId).in('data', datasAfetadas);
-    } else {
-      await sb.from('produtos_vendidos').delete().eq('loja_id', lojaId);
-    }
+    // IMPORTANTE: a planilha de produtos sempre vem com o HISTÓRICO COMPLETO
+    // da loja (uma aba por mês, todos os meses) — não é um upload incremental
+    // de só um período. Por isso apagamos TODOS os registros daquela loja
+    // antes de inserir os novos, e não só por mês ou data específica. Isso
+    // evita duplicação: o relatório do C8 é exportado com uma data de corte
+    // que muda a cada exportação (ex: "até 28/06" numa vez, "até 29/06" na
+    // próxima) — apagar por data ou só pelos meses presentes no arquivo podia
+    // deixar dados de uma exportação anterior intactos no banco, somando com
+    // os novos (bug confirmado: faturamento dobrado após recarregar em dia
+    // diferente do upload anterior).
+    await sb.from('produtos_vendidos').delete().eq('loja_id', lojaId);
 
     const payload = rowsDaLoja.map(r => ({
       loja_id: lojaId, data: r.data || null, produto: r.produto, barras: r.barras || null,
