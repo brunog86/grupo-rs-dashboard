@@ -468,6 +468,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
     <button class="tab active" onclick="switchTab('diario', this)">Visão Diária</button>
     <button class="tab" onclick="switchTab('mensal', this)">Visão Mensal</button>
     <button class="tab" onclick="switchTab('fatmeta', this)">🎯 Fat x Meta</button>
+    <button class="tab" onclick="switchTab('finexec', this)">📊 Financeiro Executivo</button>
     <button class="tab" onclick="switchTab('vendedores', this)">Vendedores</button>
     <button class="tab" onclick="switchTab('produtos', this)">Produtos & Marcas</button>
     <button class="tab" onclick="switchTab('financeiro', this)">Financeiro</button>
@@ -1106,6 +1107,72 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
           <div class="chart-wrap tall"><canvas id="chartFatMetaAcumulado"></canvas></div>
         </div>
       </div>
+
+    </div>
+
+    <!-- FINANCEIRO EXECUTIVO -->
+    <div class="tab-content" id="tab-finexec">
+
+      <!-- Filtros -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px;margin-bottom:24px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end;">
+          <div>
+            <div class="filter-label" style="margin-bottom:6px">Loja</div>
+            <select class="date-input" id="finexLojaFilter" style="width:100%" onchange="renderFinExecLeve()">
+              <option value="">Todas as lojas</option>
+            </select>
+          </div>
+          <div>
+            <div class="filter-label" style="margin-bottom:6px">Período — de</div>
+            <input type="date" class="date-input" id="finexDeFilter" style="width:100%" onchange="renderFinExecLeve()">
+          </div>
+          <div>
+            <div class="filter-label" style="margin-bottom:6px">Período — até</div>
+            <input type="date" class="date-input" id="finexAteFilter" style="width:100%" onchange="renderFinExecLeve()">
+          </div>
+          <div style="display:flex;gap:8px;align-items:flex-end;">
+            <button class="apply-btn" onclick="limparFiltrosFinExec()" style="flex:1">Limpar</button>
+            <button class="apply-btn" onclick="setFinExecMesAtual()" style="flex:1;border-color:var(--blue2);color:var(--blue2)">Mês atual</button>
+            <button class="apply-btn" onclick="setFinExecAnoAtual()" style="flex:1;border-color:var(--orange);color:var(--orange)">Ano atual</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cards executivos -->
+      <div class="metrics-grid" id="finexMetrics" style="margin-bottom:28px;"></div>
+
+      <!-- Por loja -->
+      <div class="section-title">Por loja</div>
+      <div id="finexLojaGrid" style="margin-bottom:28px;"></div>
+
+      <!-- Gráficos lado a lado -->
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-title">Margem bruta mensal (faturamento × CMV)</div>
+          <div class="chart-wrap tall"><canvas id="chartFinexMargem"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Despesas — fixa × variável × não classificada</div>
+          <div class="chart-wrap tall"><canvas id="chartFinexDespTipo"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Fluxo de caixa projetado -->
+      <div class="chart-card full" style="margin-bottom:28px;">
+        <div class="chart-title">Fluxo de caixa projetado — próximos 90 dias (contas ainda não quitadas)</div>
+        <div class="chart-wrap tall"><canvas id="chartFinexFluxoCaixa"></canvas></div>
+      </div>
+
+      <!-- Configuração do plano de contas -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div class="section-title" style="margin:0">Classificação de despesas — plano de contas</div>
+        <span id="finexCategoriasStatus" style="font-size:12px;color:var(--text2)"></span>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--text2);line-height:1.6;">
+        Classifique cada categoria de despesa como <strong style="color:var(--blue2)">Fixa</strong> ou <strong style="color:var(--orange)">Variável</strong>.
+        Categorias ainda não classificadas aparecem como <strong style="color:var(--red)">Não classificada</strong> nos indicadores acima — elas não são assumidas automaticamente em nenhum dos dois grupos.
+      </div>
+      <div id="finexCategoriasList" style="margin-bottom:28px;max-height:480px;overflow-y:auto;"></div>
 
     </div>
 
@@ -3362,7 +3429,7 @@ async function syncProdutosParaSupabase(rows) {
 
     const payload = rowsDaLoja.map(r => ({
       loja_id: lojaId, data: r.data || null, produto: r.produto, barras: r.barras || null,
-      marca: r.marca || null, quantidade: r.quantidade || 1, valor: r.valor
+      marca: r.marca || null, quantidade: r.quantidade || 1, valor: r.valor, custo: r.custo ?? null
     }));
     for (let i = 0; i < payload.length; i += 500) {
       const lote = payload.slice(i, i + 500);
@@ -3393,7 +3460,7 @@ async function syncFinanceiroParaSupabase(rows, tipo) {
 
     const payload = rowsDaLoja.map(r => ({
       loja_id: lojaId, tipo, emissao: r.emissao || null, situacao: r.situacao || null,
-      categoria: r.categoria || null, dt_vencimento: r.dtVenc || null, dt_quitacao: r.dtQuit || null,
+      categoria: r.categoria || null, cod_custo: r.codCusto || null, dt_vencimento: r.dtVenc || null, dt_quitacao: r.dtQuit || null,
       valor_doc: r.valorDoc, valor_quit: r.valorQuit || 0, historico: r.historico || null,
       fornecedor: r.fornecedor || null
     }));
@@ -3550,6 +3617,65 @@ async function buscarMetasPeriodo(mesInicio, mesFim, lojaNome) {
   }, false);
   return rows.map(r => ({
     loja: r.loja_nome, mes: r.mes, valor: parseFloat(r.valor)
+  }));
+}
+
+// ── Margem bruta (faturamento, CMV, margem) por loja em um período ─────────
+async function buscarMargemPeriodo(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_margem_periodo', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({
+    loja: r.loja_nome, fat: parseFloat(r.faturamento), cmv: parseFloat(r.cmv),
+    margem: parseFloat(r.margem_bruta), margemPct: parseFloat(r.margem_pct)
+  }));
+}
+
+// ── Série mensal de margem bruta por loja ───────────────────────────────────
+async function buscarMargemMensal(lojaNome) {
+  const rows = await callRpc('fn_margem_mensal', { p_loja_id: lojaIdPorNome(lojaNome) }, false);
+  return rows.map(r => ({
+    mes: r.mes, loja: r.loja_nome, fat: parseFloat(r.faturamento), cmv: parseFloat(r.cmv),
+    margem: parseFloat(r.margem_bruta), margemPct: parseFloat(r.margem_pct)
+  }));
+}
+
+// ── Categorias de despesa com classificação atual (tela de configuração) ──
+async function buscarCategoriasFinanceiro() {
+  const rows = await callRpc('fn_categorias_financeiro', {}, false);
+  return rows.map(r => ({
+    categoria: r.categoria, tipo: r.tipo || null, qtd: parseInt(r.qtd_lancamentos), valor: parseFloat(r.valor_total)
+  }));
+}
+
+// ── Despesas por tipo (fixa/variável/não classificada) por loja num período ─
+async function buscarDespesasFixasVariaveis(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_despesas_fixas_variaveis', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({ loja: r.loja_nome, tipo: r.tipo, valor: parseFloat(r.valor) }));
+}
+
+// ── Resumo financeiro executivo (faturamento, CMV, margem, despesas, EBITDA) ─
+async function buscarResumoExecutivo(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_resumo_executivo', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({
+    loja: r.loja_nome, fat: parseFloat(r.faturamento), cmv: parseFloat(r.cmv),
+    margem: parseFloat(r.margem_bruta), margemPct: parseFloat(r.margem_pct),
+    despFixa: parseFloat(r.despesa_fixa), despVar: parseFloat(r.despesa_variavel),
+    despNaoClass: parseFloat(r.despesa_nao_class), ebitda: parseFloat(r.ebitda)
+  }));
+}
+
+// ── Fluxo de caixa projetado (a pagar/receber por dia, ainda não quitados) ──
+async function buscarFluxoCaixaProjetado(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_fluxo_caixa_projetado', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({
+    dia: r.dia, aPagar: parseFloat(r.a_pagar), aReceber: parseFloat(r.a_receber), saldo: parseFloat(r.saldo_dia)
   }));
 }
 
@@ -4019,9 +4145,13 @@ function parseSheetProdutos(aoa, lojaName) {
   if (headerIdx < 0) return [];
 
   // Column indices per format
+  // "custo" confirmado com arquivo real só no Formato B (índice 8 = "Custo" do
+  // relatório, valor já total da quantidade vendida, não unitário). No Formato
+  // A ainda não temos um arquivo de exemplo para confirmar a posição — por
+  // isso fica null ali, em vez de arriscar mapear uma coluna errada.
   const COL = fmt === 'B'
-    ? { cod: 0, barras: 2, descr: 3, qty: 6, valor: 11 }  // histórico multi-abas
-    : { cod: 1, barras: 3, descr: 4, qty: 9, valor: 14 };  // single export C8
+    ? { cod: 0, barras: 2, descr: 3, qty: 6, custo: 8, valor: 11 }  // histórico multi-abas
+    : { cod: 1, barras: 3, descr: 4, qty: 9, custo: null, valor: 14 };  // single export C8
 
   const rows = [];
   for (let i = headerIdx + 1; i < aoa.length; i++) {
@@ -4036,8 +4166,14 @@ function parseSheetProdutos(aoa, lojaName) {
     const qty   = parseFloat(rawQty);
     const valor = parseFloat(rawVenda);
     if (isNaN(valor) || valor <= 0) continue;
+    let custo = null;
+    if (COL.custo !== null) {
+      const rawCusto = String(row[COL.custo] || '').replace(',', '.');
+      const custoNum = parseFloat(rawCusto);
+      if (!isNaN(custoNum)) custo = custoNum;
+    }
     const marca = catalogoMarcas[barras] || 'SEM IDENTIF';
-    rows.push({ data: dataRef, mesAno, loja: empresa, produto: descr, barras, marca, quantidade: isNaN(qty) ? 1 : qty, valor });
+    rows.push({ data: dataRef, mesAno, loja: empresa, produto: descr, barras, marca, quantidade: isNaN(qty) ? 1 : qty, valor, custo });
   }
   return rows;
 }
@@ -5008,7 +5144,8 @@ function parseFinanceiro(arrayBuffer, lojaName, tipo) {
       const emissao   = parseDate(r[0]);
       if (!emissao) continue;
       const situacao  = String(r[5] || '').trim().toUpperCase();
-      const categoria = String(r[8] || '').trim();
+      const codCusto  = String(r[7] || '').trim(); // "C.Custo" — código do plano de contas (ex: "2.1.22"), guardado só para referência
+      const categoria = String(r[8] || '').trim(); // "Descrição do Custo" — usada para a classificação fixa/variável
       const dtVenc    = parseDate(r[10]);
       const dtQuit    = parseDate(r[11]);
       const rawDoc    = String(r[12] || '').replace(',', '.');
@@ -5022,7 +5159,7 @@ function parseFinanceiro(arrayBuffer, lojaName, tipo) {
       // Month/year from vencimento
       const mesAno = dtVenc ? dtVenc.substring(0, 7) : emissao.substring(0, 7);
 
-      rows.push({ loja, tipo, emissao, situacao, categoria, dtVenc, dtQuit, valorDoc, valorQuit, historico, fornecedor, mesAno });
+      rows.push({ loja, tipo, emissao, situacao, categoria, codCusto, dtVenc, dtQuit, valorDoc, valorQuit, historico, fornecedor, mesAno });
     }
     return rows.length ? rows : null;
   } catch(e) { console.error('parseFinanceiro error:', e); return null; }
@@ -6298,8 +6435,252 @@ async function renderFatMeta() {
   });
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// FINANCEIRO EXECUTIVO — CMV/margem, fixo×variável, EBITDA, fluxo de caixa
+// ════════════════════════════════════════════════════════════════════════════
 
-let pgtoData = []; // vendas com forma de pagamento
+function limparFiltrosFinExec() {
+  document.getElementById('finexLojaFilter').value = '';
+  document.getElementById('finexDeFilter').value = '';
+  document.getElementById('finexAteFilter').value = '';
+  renderFinExecLeve();
+}
+
+function setFinExecMesAtual() {
+  const now = new Date();
+  const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+  document.getElementById('finexDeFilter').value  = `${y}-${m}-01`;
+  document.getElementById('finexAteFilter').value = now.toISOString().split('T')[0];
+  renderFinExecLeve();
+}
+
+function setFinExecAnoAtual() {
+  const y = new Date().getFullYear();
+  document.getElementById('finexDeFilter').value  = `${y}-01-01`;
+  document.getElementById('finexAteFilter').value = `${y}-12-31`;
+  renderFinExecLeve();
+}
+
+async function renderFinExecLeve() {
+  const lojaSelect = document.getElementById('finexLojaFilter');
+  if (lojaSelect && !lojaSelect.dataset.populated) {
+    const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+    lojaSelect.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+    lojaSelect.dataset.populated = '1';
+  }
+
+  const lojaFil = document.getElementById('finexLojaFilter').value;
+  let de  = document.getElementById('finexDeFilter').value;
+  let ate = document.getElementById('finexAteFilter').value;
+  if (!de || !ate) {
+    // Padrão: mês atual, se nenhum período foi escolhido ainda
+    const now = new Date();
+    de  = de  || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
+    ate = ate || now.toISOString().split('T')[0];
+  }
+
+  const tFX = performance.now();
+  const [resumo, margemMensalTudo, despFixVar, categorias, fluxoCaixa] = await Promise.all([
+    buscarResumoExecutivo(de, ate, lojaFil),
+    buscarMargemMensal(lojaFil),
+    buscarDespesasFixasVariaveis(de, ate, lojaFil),
+    buscarCategoriasFinanceiro(),
+    buscarFluxoCaixaProjetado(new Date().toISOString().split('T')[0],
+      new Date(Date.now() + 90*86400000).toISOString().split('T')[0], lojaFil),
+  ]);
+  console.log(`[perf] renderFinExecLeve fetch: ${Math.round(performance.now() - tFX)}ms`);
+
+  // ── Cards executivos (somatório de todas as lojas no escopo do filtro) ────
+  const totalFat    = resumo.reduce((s,r) => s + r.fat, 0);
+  const totalCmv     = resumo.reduce((s,r) => s + r.cmv, 0);
+  const totalMargem  = resumo.reduce((s,r) => s + r.margem, 0);
+  const margemPctTot = totalFat > 0 ? (totalMargem / totalFat * 100) : 0;
+  const totalDespFixa = resumo.reduce((s,r) => s + r.despFixa, 0);
+  const totalDespVar  = resumo.reduce((s,r) => s + r.despVar, 0);
+  const totalDespNC   = resumo.reduce((s,r) => s + r.despNaoClass, 0);
+  const totalEbitda   = resumo.reduce((s,r) => s + r.ebitda, 0);
+
+  // Ponto de equilíbrio aproximado: despesa fixa ÷ margem de contribuição %.
+  // Aqui usamos a margem bruta % como proxy da margem de contribuição —
+  // simplificação razoável quando não há separação de custos variáveis de
+  // venda além do CMV (ex: comissão sobre venda já embutida nas despesas).
+  // Só calculamos se a margem for positiva — com margem zero ou negativa o
+  // ponto de equilíbrio não tem significado prático (nunca seria atingido
+  // aumentando apenas o volume de vendas no mix atual).
+  const pontoEquilibrio = margemPctTot > 0 ? totalDespFixa / (margemPctTot/100) : null;
+
+  makeMetrics(document.getElementById('finexMetrics'), [
+    { label: 'Faturamento', value: fmt(totalFat), cls: 'neutral' },
+    { label: 'CMV', value: fmt(totalCmv), cls: 'down' },
+    { label: 'Margem bruta', value: `${fmt(totalMargem)} (${margemPctTot.toFixed(1).replace('.',',')}%)`, cls: totalMargem >= 0 ? 'up' : 'down' },
+    { label: 'Despesa fixa', value: fmt(totalDespFixa), cls: 'down' },
+    { label: 'Despesa variável', value: fmt(totalDespVar), cls: 'down' },
+    { label: 'EBITDA (simplificado)', value: fmt(totalEbitda), cls: totalEbitda >= 0 ? 'up' : 'down' },
+    { label: 'Ponto de equilíbrio (receita)', value: pontoEquilibrio !== null ? fmt(pontoEquilibrio) : '—', sub: 'estimado — margem bruta como proxy', cls: 'neutral' },
+  ]);
+  if (totalDespNC > 0) {
+    showToast(`${fmt(totalDespNC)} em despesas ainda não classificadas (fixa/variável) — confira a lista abaixo.`, '');
+  }
+
+  // ── Por loja ────────────────────────────────────────────────────────────
+  const lojaGrid = document.getElementById('finexLojaGrid');
+  lojaGrid.innerHTML = '';
+  resumo.forEach(r => {
+    const color = lojaColorMap[r.loja] || '#4F7EFF';
+    const row = document.createElement('div');
+    row.style.cssText = `
+      background:var(--bg3); border:1px solid var(--border);
+      border-left:3px solid ${color}; border-radius:var(--radius);
+      padding:14px 18px; display:grid;
+      grid-template-columns:160px 1fr 1fr 1fr 1fr 1fr 1fr;
+      align-items:center; gap:12px; margin-bottom:10px;
+    `;
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:14px">
+        <div style="width:10px;height:10px;border-radius:3px;background:${color};flex-shrink:0"></div>${r.loja}
+      </div>
+      <div><div class="loja-metric-label">Faturamento</div><div class="loja-metric-value" style="color:${color}">${fmt(r.fat)}</div></div>
+      <div><div class="loja-metric-label">CMV</div><div class="loja-metric-value" style="color:var(--red)">${fmt(r.cmv)}</div></div>
+      <div><div class="loja-metric-label">Margem</div><div class="loja-metric-value" style="color:${r.margem>=0?'var(--green)':'var(--red)'}">${r.margemPct.toFixed(1).replace('.',',')}%</div></div>
+      <div><div class="loja-metric-label">Desp. fixa</div><div class="loja-metric-value">${fmt(r.despFixa)}</div></div>
+      <div><div class="loja-metric-label">Desp. variável</div><div class="loja-metric-value">${fmt(r.despVar)}</div></div>
+      <div><div class="loja-metric-label">EBITDA</div><div class="loja-metric-value" style="color:${r.ebitda>=0?'var(--green)':'var(--red)'}">${fmt(r.ebitda)}</div></div>`;
+    lojaGrid.appendChild(row);
+  });
+  if (!resumo.length) {
+    lojaGrid.innerHTML = '<div class="empty"><div class="empty-icon">📊</div>Sem dados para este período</div>';
+  }
+
+  // ── Gráfico: margem mensal (todo o histórico disponível, não só o filtro) ─
+  const mesLabel = ym => { const [y,m] = ym.split('-'); return new Date(+y,+m-1,1).toLocaleDateString('pt-BR',{month:'short',year:'2-digit'}); };
+  const mesesMargem = [...new Set(margemMensalTudo.map(r => r.mes.substring(0,7)))].sort();
+  const lojasMargem = lojaFil ? [lojaFil] : todasLojasCadastro.map(l => l.nome).sort();
+  const fatPorMes = {}, cmvPorMes = {};
+  mesesMargem.forEach(m => { fatPorMes[m] = 0; cmvPorMes[m] = 0; });
+  margemMensalTudo.forEach(r => {
+    const m = r.mes.substring(0,7);
+    if (!lojaFil || r.loja === lojaFil) { fatPorMes[m] = (fatPorMes[m]||0) + r.fat; cmvPorMes[m] = (cmvPorMes[m]||0) + r.cmv; }
+  });
+  const margemSerie = mesesMargem.map(m => fatPorMes[m] - cmvPorMes[m]);
+  const margemPctSerie = mesesMargem.map(m => fatPorMes[m] > 0 ? (fatPorMes[m]-cmvPorMes[m])/fatPorMes[m]*100 : 0);
+
+  destroyChart('finexMargem'); destroyChart('finexDespTipo'); destroyChart('finexFluxoCaixa');
+
+  const baseOptsFX = {
+    ...chartDefaults,
+    plugins: { ...chartDefaults.plugins, legend: { display: true, position: 'top', labels: { color: 'var(--text2)', font: { family: 'Plus Jakarta Sans', size: 11 }, padding: 14, boxWidth: 12 } } },
+    scales: {
+      x: { ...chartDefaults.scales.x, ticks: { ...chartDefaults.scales.x.ticks, maxRotation: 45 } },
+      y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } }
+    }
+  };
+
+  const ctxMargem = document.getElementById('chartFinexMargem').getContext('2d');
+  charts['finexMargem'] = new Chart(ctxMargem, {
+    data: {
+      labels: mesesMargem.map(mesLabel),
+      datasets: [
+        { type: 'bar', label: 'Faturamento', data: mesesMargem.map(m => fatPorMes[m]), backgroundColor: 'rgba(37,99,235,0.55)', borderRadius: 4, borderSkipped: false, yAxisID: 'y' },
+        { type: 'bar', label: 'CMV', data: mesesMargem.map(m => cmvPorMes[m]), backgroundColor: 'rgba(220,38,38,0.55)', borderRadius: 4, borderSkipped: false, yAxisID: 'y' },
+        { type: 'line', label: 'Margem %', data: margemPctSerie, borderColor: '#059669', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3, borderWidth: 2, yAxisID: 'y1' },
+      ]
+    },
+    options: {
+      ...baseOptsFX,
+      scales: {
+        ...baseOptsFX.scales,
+        y1: { position: 'right', grid: { display: false }, ticks: { color: '#9AA3BC', font: { family: 'Plus Jakarta Sans', size: 11 }, callback: v => v.toFixed(0)+'%' } }
+      }
+    }
+  });
+
+  // ── Gráfico: despesas fixa × variável × não classificada (período filtrado) ─
+  const tiposDesp = ['fixa', 'variavel', 'nao_classificada'];
+  const labelTipo = { fixa: 'Fixa', variavel: 'Variável', nao_classificada: 'Não classificada' };
+  const corTipo = { fixa: 'rgba(37,99,235,0.75)', variavel: 'rgba(217,119,6,0.75)', nao_classificada: 'rgba(154,163,188,0.6)' };
+  const lojasDesp = lojaFil ? [lojaFil] : [...new Set(despFixVar.map(r => r.loja))].sort();
+  const ctxDespTipo = document.getElementById('chartFinexDespTipo').getContext('2d');
+  charts['finexDespTipo'] = new Chart(ctxDespTipo, {
+    type: 'bar',
+    data: {
+      labels: lojasDesp,
+      datasets: tiposDesp.map(tipo => ({
+        label: labelTipo[tipo],
+        data: lojasDesp.map(l => despFixVar.find(r => r.loja === l && r.tipo === tipo)?.valor || 0),
+        backgroundColor: corTipo[tipo], borderRadius: 4, borderSkipped: false, stack: 'desp'
+      }))
+    },
+    options: { ...baseOptsFX, scales: { ...baseOptsFX.scales, x: { ...baseOptsFX.scales.x, stacked: true }, y: { ...baseOptsFX.scales.y, stacked: true } } }
+  });
+
+  // ── Gráfico: fluxo de caixa projetado (90 dias) ─────────────────────────
+  const diaLabel = d => { const [y,m,dd] = d.split('-'); return `${dd}/${m}`; };
+  const ctxFluxo = document.getElementById('chartFinexFluxoCaixa').getContext('2d');
+  charts['finexFluxoCaixa'] = new Chart(ctxFluxo, {
+    type: 'bar',
+    data: {
+      labels: fluxoCaixa.map(r => diaLabel(r.dia)),
+      datasets: [
+        { label: 'A receber', data: fluxoCaixa.map(r => r.aReceber), backgroundColor: 'rgba(5,150,105,0.75)', borderRadius: 3, borderSkipped: false },
+        { label: 'A pagar', data: fluxoCaixa.map(r => -r.aPagar), backgroundColor: 'rgba(220,38,38,0.75)', borderRadius: 3, borderSkipped: false },
+      ]
+    },
+    options: { ...baseOptsFX, scales: { ...baseOptsFX.scales, x: { ...baseOptsFX.scales.x, stacked: true }, y: { ...baseOptsFX.scales.y, stacked: true } } }
+  });
+  if (!fluxoCaixa.length) {
+    document.getElementById('chartFinexFluxoCaixa').parentElement.insertAdjacentHTML('beforeend',
+      '<div class="empty" style="margin-top:-20px"><div class="empty-icon">💰</div>Nenhuma conta a pagar/receber pendente nos próximos 90 dias</div>');
+  }
+
+  // ── Lista de classificação do plano de contas ───────────────────────────
+  renderListaCategoriasFinanceiro(categorias);
+}
+
+function renderListaCategoriasFinanceiro(categorias) {
+  const status = document.getElementById('finexCategoriasStatus');
+  const naoClassificadas = categorias.filter(c => !c.tipo).length;
+  status.textContent = naoClassificadas > 0
+    ? `${naoClassificadas} categoria(s) ainda não classificada(s)`
+    : 'Todas as categorias estão classificadas';
+  status.style.color = naoClassificadas > 0 ? 'var(--red)' : 'var(--green)';
+
+  const lista = document.getElementById('finexCategoriasList');
+  lista.innerHTML = '';
+  categorias.forEach(c => {
+    const row = document.createElement('div');
+    const corBorda = c.tipo === 'fixa' ? 'var(--blue2)' : c.tipo === 'variavel' ? 'var(--orange)' : 'var(--red)';
+    row.style.cssText = `
+      background:var(--bg3); border:1px solid var(--border); border-left:3px solid ${corBorda};
+      border-radius:var(--radius-sm); padding:10px 16px; margin-bottom:6px;
+      display:grid; grid-template-columns:1fr 140px 140px auto; align-items:center; gap:12px;
+    `;
+    row.innerHTML = `
+      <div style="font-size:13px;font-weight:600;">${c.categoria}</div>
+      <div style="font-size:12px;color:var(--text2)">${fmtNum(c.qtd)} lançamento(s)</div>
+      <div style="font-size:13px;font-weight:700;">${fmt(c.valor)}</div>
+      <div style="display:flex;gap:6px;">
+        <button class="apply-btn" style="padding:4px 12px;font-size:12px;${c.tipo==='fixa'?'background:var(--blue2);color:white;':'border-color:var(--blue2);color:var(--blue2);'}" onclick="classificarCategoriaFinanceiro('${c.categoria.replace(/'/g,"\\'")}', 'fixa')">Fixa</button>
+        <button class="apply-btn" style="padding:4px 12px;font-size:12px;${c.tipo==='variavel'?'background:var(--orange);color:white;':'border-color:var(--orange);color:var(--orange);'}" onclick="classificarCategoriaFinanceiro('${c.categoria.replace(/'/g,"\\'")}', 'variavel')">Variável</button>
+      </div>`;
+    lista.appendChild(row);
+  });
+  if (!categorias.length) {
+    lista.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>Nenhuma categoria de despesa encontrada — carregue o arquivo de Contas a Pagar na aba Financeiro.</div>';
+  }
+}
+
+async function classificarCategoriaFinanceiro(categoria, tipo) {
+  const { error } = await sb.from('plano_contas_classificacao')
+    .upsert({ descricao: categoria, tipo, updated_at: new Date().toISOString() }, { onConflict: 'descricao' });
+  if (error) {
+    showToast('Erro ao salvar classificação: ' + error.message, 'error');
+    return;
+  }
+  showToast(`"${categoria}" classificada como ${tipo === 'fixa' ? 'Fixa' : 'Variável'}`, 'success');
+  limparRpcCache();
+  await renderFinExecLeve();
+}
+
 
 const PGTO_CORES = {
   'CARTAO DE CREDITO': '#2563EB',
@@ -6862,6 +7243,7 @@ function switchTab(name, btn) {
   if (name === 'analise')     renderAnaliseLeve();
   if (name === 'evolucao')    renderEvolucaoLeve();
   if (name === 'fatmeta')     renderFatMeta();
+  if (name === 'finexec')     renderFinExecLeve();
   if (name === 'config')      carregarListaUsuarios();
 }
 
