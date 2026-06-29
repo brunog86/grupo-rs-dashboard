@@ -2804,9 +2804,26 @@ async function initDashboardLeve() {
 
 function assignLojaColorsFromCadastro() {
   const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+  const coresUsadas = new Set();
   nomesLojas.forEach((nome, i) => {
     const cadastro = todasLojasCadastro.find(l => l.nome === nome);
-    lojaColorMap[nome] = (cadastro && cadastro.cor) || LOJA_COLORS[i % LOJA_COLORS.length];
+    const corDoCadastro = cadastro && cadastro.cor;
+    // Só usa a cor gravada no cadastro se ela ainda não foi usada por outra
+    // loja nesta mesma passagem — evita que duas lojas fiquem com a mesma cor
+    // por causa de um valor antigo/duplicado salvo no banco (a tabela "lojas"
+    // nunca é apagada nas limpezas de dados, então um valor de cor gravado
+    // por engano no passado persiste indefinidamente até ser corrigido aqui).
+    let cor = (corDoCadastro && !coresUsadas.has(corDoCadastro)) ? corDoCadastro : null;
+    if (!cor) {
+      // Busca a próxima cor da paleta que ainda não esteja em uso
+      let tentativa = i;
+      do {
+        cor = LOJA_COLORS[tentativa % LOJA_COLORS.length];
+        tentativa++;
+      } while (coresUsadas.has(cor) && tentativa < i + LOJA_COLORS.length);
+    }
+    coresUsadas.add(cor);
+    lojaColorMap[nome] = cor;
   });
 }
 
