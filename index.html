@@ -1025,40 +1025,43 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
       <!-- Métricas resumo -->
       <div class="metrics-grid" id="evolMetrics" style="margin-bottom:28px;"></div>
 
-      <!-- Faturamento anual por empresa -->
-      <div class="chart-card full" style="margin-bottom:16px;">
-        <div class="chart-title">Faturamento anual — por empresa</div>
-        <div class="chart-wrap tall"><canvas id="chartEvolFatAnual"></canvas></div>
-      </div>
+      <!-- 6 gráficos lado a lado, 2 por linha -->
+      <div class="charts-grid">
+        <!-- Faturamento anual por empresa -->
+        <div class="chart-card">
+          <div class="chart-title">Faturamento anual — por empresa</div>
+          <div class="chart-wrap tall"><canvas id="chartEvolFatAnual"></canvas></div>
+        </div>
 
-      <!-- Faturamento mensal total + por empresa -->
-      <div class="chart-card full" style="margin-bottom:16px;">
-        <div class="chart-title">Evolução mensal — faturamento por empresa</div>
-        <div class="chart-wrap" style="height:320px"><canvas id="chartEvolFatMensal"></canvas></div>
-      </div>
+        <!-- Faturamento mensal total + por empresa -->
+        <div class="chart-card">
+          <div class="chart-title">Evolução mensal — faturamento por empresa</div>
+          <div class="chart-wrap" style="height:320px"><canvas id="chartEvolFatMensal"></canvas></div>
+        </div>
 
-      <!-- Participação mensal por empresa (área empilhada) -->
-      <div class="chart-card full" style="margin-bottom:16px;">
-        <div class="chart-title">Participação mensal por empresa — área empilhada</div>
-        <div class="chart-wrap" style="height:320px"><canvas id="chartEvolArea"></canvas></div>
-      </div>
+        <!-- Participação mensal por empresa (área empilhada) -->
+        <div class="chart-card">
+          <div class="chart-title">Participação mensal por empresa — área empilhada</div>
+          <div class="chart-wrap" style="height:320px"><canvas id="chartEvolArea"></canvas></div>
+        </div>
 
-      <!-- Despesas mensais por empresa -->
-      <div class="chart-card full" style="margin-bottom:16px;">
-        <div class="chart-title">Despesas mensais — por empresa</div>
-        <div class="chart-wrap" style="height:320px"><canvas id="chartEvolDesp"></canvas></div>
-      </div>
+        <!-- Despesas mensais por empresa -->
+        <div class="chart-card">
+          <div class="chart-title">Despesas mensais — por empresa</div>
+          <div class="chart-wrap" style="height:320px"><canvas id="chartEvolDesp"></canvas></div>
+        </div>
 
-      <!-- Faturamento x Despesas por empresa (barras agrupadas por mês) -->
-      <div class="chart-card full" style="margin-bottom:16px;">
-        <div class="chart-title">Faturamento × Despesas — evolução mensal</div>
-        <div class="chart-wrap" style="height:320px"><canvas id="chartEvolFatVsDesp"></canvas></div>
-      </div>
+        <!-- Faturamento x Despesas por empresa (barras agrupadas por mês) -->
+        <div class="chart-card">
+          <div class="chart-title">Faturamento × Despesas — evolução mensal</div>
+          <div class="chart-wrap" style="height:320px"><canvas id="chartEvolFatVsDesp"></canvas></div>
+        </div>
 
-      <!-- Saldo mensal (fat - desp) -->
-      <div class="chart-card full" style="margin-bottom:28px;">
-        <div class="chart-title">Saldo mensal (faturamento − despesas)</div>
-        <div class="chart-wrap" style="height:280px"><canvas id="chartEvolSaldo"></canvas></div>
+        <!-- Saldo mensal (fat - desp) -->
+        <div class="chart-card">
+          <div class="chart-title">Saldo mensal (faturamento − despesas)</div>
+          <div class="chart-wrap" style="height:280px"><canvas id="chartEvolSaldo"></canvas></div>
+        </div>
       </div>
 
     </div>
@@ -5882,10 +5885,28 @@ async function renderEvolucaoLeve() {
   const mesLabel = mesLabelEvol;
 
   // All months in range
-  const allMeses = [...new Set([
+  let allMeses = [...new Set([
     ...vendas.map(r => r.mes.substring(0,7)),
     ...despesas.map(r => r.mes.substring(0,7)),
   ])].sort();
+
+  // Corta o eixo no último mês com dado real (faturamento OU despesa > 0).
+  // Sem esse corte, o eixo se estende até onde existir QUALQUER lançamento
+  // futuro cadastrado no financeiro (ex: parcelas a vencer em 2027+), mesmo
+  // que não haja nenhum movimento real depois disso — deixando o gráfico
+  // com uma cauda longa e vazia. O filtro de período (de/até) escolhido pelo
+  // usuário continua tendo prioridade: só cortamos dentro do que já foi
+  // filtrado, nunca alargamos.
+  if (!ateFil) {
+    const fatPorMes = {}, despPorMes = {};
+    vendas.forEach(r => { const m = r.mes.substring(0,7); fatPorMes[m] = (fatPorMes[m]||0) + r.valor; });
+    despesas.forEach(r => { const m = r.mes.substring(0,7); despPorMes[m] = (despPorMes[m]||0) + r.valor; });
+    let ultimoComDado = null;
+    for (const m of allMeses) {
+      if ((fatPorMes[m] || 0) > 0 || (despPorMes[m] || 0) > 0) ultimoComDado = m;
+    }
+    if (ultimoComDado) allMeses = allMeses.filter(m => m <= ultimoComDado);
+  }
 
   // All years
   const allAnos = [...new Set(allMeses.map(m => m.substring(0,4)))].sort();
