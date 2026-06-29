@@ -6509,30 +6509,39 @@ async function renderFinExecLeve() {
   // aumentando apenas o volume de vendas no mix atual).
   const pontoEquilibrio = margemPctTot > 0 ? totalDespFixa / (margemPctTot/100) : null;
 
-  makeMetrics(document.getElementById('finexMetrics'), [
+  const metricasFinex = [
     { label: 'Faturamento', value: fmt(totalFat), cls: 'neutral' },
     { label: 'CMV', value: fmt(totalCmv), cls: 'down' },
     { label: 'Margem bruta', value: `${fmt(totalMargem)} (${margemPctTot.toFixed(1).replace('.',',')}%)`, cls: totalMargem >= 0 ? 'up' : 'down' },
     { label: 'Despesa fixa', value: fmt(totalDespFixa), cls: 'down' },
     { label: 'Despesa variável', value: fmt(totalDespVar), cls: 'down' },
-    { label: 'EBITDA (simplificado)', value: fmt(totalEbitda), cls: totalEbitda >= 0 ? 'up' : 'down' },
-    { label: 'Ponto de equilíbrio (receita)', value: pontoEquilibrio !== null ? fmt(pontoEquilibrio) : '—', sub: 'estimado — margem bruta como proxy', cls: 'neutral' },
-  ]);
+  ];
+  // Card só aparece quando há despesa não classificada — assim que tudo for
+  // classificado na lista abaixo, ele desaparece sozinho. Fica visível na
+  // tela (não só num toast que some) porque, enquanto existir, o EBITDA e os
+  // totais de fixa/variável estão incompletos — precisa ficar claro.
   if (totalDespNC > 0) {
-    showToast(`${fmt(totalDespNC)} em despesas ainda não classificadas (fixa/variável) — confira a lista abaixo.`, '');
+    metricasFinex.push({ label: 'Despesa não classificada', value: fmt(totalDespNC), sub: 'classifique na lista abaixo', cls: 'down' });
   }
+  metricasFinex.push(
+    { label: 'EBITDA (simplificado)', value: fmt(totalEbitda), cls: totalEbitda >= 0 ? 'up' : 'down' },
+    { label: 'Ponto de equilíbrio (receita)', value: pontoEquilibrio !== null ? fmt(pontoEquilibrio) : '—', sub: 'estimado — margem bruta como proxy', cls: 'neutral' }
+  );
+  makeMetrics(document.getElementById('finexMetrics'), metricasFinex);
 
   // ── Por loja ────────────────────────────────────────────────────────────
   const lojaGrid = document.getElementById('finexLojaGrid');
   lojaGrid.innerHTML = '';
+  const temNaoClassPorLoja = resumo.some(r => r.despNaoClass > 0);
   resumo.forEach(r => {
     const color = lojaColorMap[r.loja] || '#4F7EFF';
     const row = document.createElement('div');
+    const nCols = temNaoClassPorLoja ? 8 : 7;
     row.style.cssText = `
       background:var(--bg3); border:1px solid var(--border);
       border-left:3px solid ${color}; border-radius:var(--radius);
       padding:14px 18px; display:grid;
-      grid-template-columns:160px 1fr 1fr 1fr 1fr 1fr 1fr;
+      grid-template-columns:160px repeat(${nCols - 1}, 1fr);
       align-items:center; gap:12px; margin-bottom:10px;
     `;
     row.innerHTML = `
@@ -6544,6 +6553,7 @@ async function renderFinExecLeve() {
       <div><div class="loja-metric-label">Margem</div><div class="loja-metric-value" style="color:${r.margem>=0?'var(--green)':'var(--red)'}">${r.margemPct.toFixed(1).replace('.',',')}%</div></div>
       <div><div class="loja-metric-label">Desp. fixa</div><div class="loja-metric-value">${fmt(r.despFixa)}</div></div>
       <div><div class="loja-metric-label">Desp. variável</div><div class="loja-metric-value">${fmt(r.despVar)}</div></div>
+      ${temNaoClassPorLoja ? `<div><div class="loja-metric-label">Não classif.</div><div class="loja-metric-value" style="color:var(--red)">${fmt(r.despNaoClass)}</div></div>` : ''}
       <div><div class="loja-metric-label">EBITDA</div><div class="loja-metric-value" style="color:${r.ebitda>=0?'var(--green)':'var(--red)'}">${fmt(r.ebitda)}</div></div>`;
     lojaGrid.appendChild(row);
   });
