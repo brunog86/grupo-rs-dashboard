@@ -3058,6 +3058,7 @@ function parseXLS(arrayBuffer, lojaName) {
           loja: empresa,
           vendedor: String(row[11] || '').trim() || 'N/A',
           caixa:    String(row[10] || '').trim(),
+          tipo:     String(row[4]  || '').trim() || null,
           valor
         });
       }
