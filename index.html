@@ -465,16 +465,16 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 
 <div id="dashboardArea" style="display:none">
   <div class="tabs">
-    <button class="tab active" onclick="switchTab('diario', this)">Visão Diária</button>
-    <button class="tab" onclick="switchTab('mensal', this)">Visão Mensal</button>
+    <button class="tab active" onclick="switchTab('diario', this)">📅 Visão Diária</button>
+    <button class="tab" onclick="switchTab('mensal', this)">🗓️ Visão Mensal</button>
     <button class="tab" onclick="switchTab('fatmeta', this)">🎯 Fat x Meta</button>
     <button class="tab" onclick="switchTab('finexec', this)">📊 Financeiro Executivo</button>
-    <button class="tab" onclick="switchTab('vendedores', this)">Vendedores</button>
-    <button class="tab" onclick="switchTab('produtos', this)">Produtos & Marcas</button>
-    <button class="tab" onclick="switchTab('financeiro', this)">Financeiro</button>
-    <button class="tab" onclick="switchTab('pagamentos', this)">Pagamentos</button>
-    <button class="tab" onclick="switchTab('analise', this)">Análise</button>
-    <button class="tab" onclick="switchTab('evolucao', this)">Evolução</button>
+    <button class="tab" onclick="switchTab('vendedores', this)">🏆 Vendedores</button>
+    <button class="tab" onclick="switchTab('produtos', this)">📦 Produtos & Marcas</button>
+    <button class="tab" onclick="switchTab('financeiro', this)">💰 Financeiro</button>
+    <button class="tab" onclick="switchTab('pagamentos', this)">💳 Pagamentos</button>
+    <button class="tab" onclick="switchTab('analise', this)">🔍 Análise</button>
+    <button class="tab" onclick="switchTab('evolucao', this)">📈 Evolução</button>
     <button class="tab" id="tabBtnConfig" onclick="switchTab('config', this)" style="display:none">⚙ Configurações</button>
   </div>
 
@@ -1652,7 +1652,7 @@ const chartDefaults = {
   }
 };
 
-function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisRestantes) {
+function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisRestantes, metaPorLoja, crescFatPorLoja, fatMesAnteriorTotalPorLoja) {
   const lojas = Object.keys(byLoja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
   container.innerHTML = '';
   if (!lojas.length) { container.innerHTML = '<div class="empty"><div class="empty-icon">📭</div>Sem dados para este período</div>'; return; }
@@ -1660,6 +1660,13 @@ function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisResta
     const d = byLoja[l];
     const ticket = d.qty > 0 ? d.fat / d.qty : 0;
     const color = lojaColorMap[l] || '#4F7EFF';
+
+    // Crescimento do faturamento vs. mesmo período do mês anterior
+    let fatSub = null;
+    if (crescFatPorLoja && crescFatPorLoja[l] !== undefined) {
+      const pct = crescFatPorLoja[l];
+      fatSub = `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1).replace('.',',')}% vs. mês anterior`;
+    }
 
     let mediaDiariaHTML = '';
     let tendenciaHTML = '';
@@ -1676,9 +1683,17 @@ function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisResta
         // Tendência = faturamento atual da loja + (média/dia da loja × dias úteis restantes no mês)
         if (uteisRestantes !== undefined && uteisRestantes !== null) {
           const tendLoja = d.fat + mediaLoja * uteisRestantes;
+          // % de crescimento da tendência vs. faturamento TOTAL FECHADO do mês anterior
+          let tendSub = '';
+          const baseTend = fatMesAnteriorTotalPorLoja && fatMesAnteriorTotalPorLoja[l];
+          if (baseTend > 0) {
+            const pctTend = ((tendLoja - baseTend) / baseTend) * 100;
+            tendSub = `<div style="font-size:11px;color:${pctTend>=0?'var(--green)':'var(--red)'};margin-top:2px;">${pctTend >= 0 ? '▲' : '▼'} ${Math.abs(pctTend).toFixed(1).replace('.',',')}% vs. mês anterior</div>`;
+          }
           tendenciaHTML = `<div class="loja-metric">
             <div class="loja-metric-label">Tendência</div>
             <div class="loja-metric-value" style="color:var(--green)">${fmt(tendLoja)}</div>
+            ${tendSub}
           </div>`;
         } else if (uteisMes) {
           // Fallback antigo (Visão Diária não passa uteisRestantes — não usa este card)
@@ -1700,6 +1715,7 @@ function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisResta
       <div class="loja-metric">
         <div class="loja-metric-label">Faturamento</div>
         <div class="loja-metric-value" style="color:${color}">${fmt(d.fat)}</div>
+        ${fatSub ? `<div style="font-size:11px;color:${(crescFatPorLoja[l]>=0)?'var(--green)':'var(--red)'};margin-top:2px;">${fatSub}</div>` : ''}
       </div>
       <div class="loja-metric">
         <div class="loja-metric-label">Qtd. vendas</div>
@@ -2041,12 +2057,38 @@ async function renderMensalLeve() {
   const ultimoDia = `${activeMonth}-${String(ultimoDiaNum).padStart(2,'0')}`;
 
   const tM = performance.now();
-  const [resumo, diario, porHora, porTipo, metas] = await Promise.all([
+  // Mês anterior — usado para calcular % de crescimento por loja:
+  //  - mesAnteriorAteDia: faturamento do mês anterior até o MESMO DIA do mês
+  //    atual (comparação justa quando o mês ainda não terminou) — usado no
+  //    crescimento do "Faturamento"
+  //  - mesAnteriorTotal: faturamento do mês anterior INTEIRO (fechado) —
+  //    usado no crescimento da "Tendência" (compara projeção vs. resultado
+  //    final já consolidado do mês anterior)
+  const [yAtual, mAtual] = activeMonth.split('-').map(Number);
+  const dataAnteriorBase = new Date(yAtual, mAtual - 2, 1); // mês anterior, dia 1
+  const mesAnteriorYM = `${dataAnteriorBase.getFullYear()}-${String(dataAnteriorBase.getMonth()+1).padStart(2,'0')}`;
+  const primeiroDiaAnterior = `${mesAnteriorYM}-01`;
+  const [yAnt, mAnt] = mesAnteriorYM.split('-').map(Number);
+  const ultimoDiaAnteriorNum = new Date(yAnt, mAnt, 0).getDate();
+  const ultimoDiaAnteriorTotal = `${mesAnteriorYM}-${String(ultimoDiaAnteriorNum).padStart(2,'0')}`;
+  // "Mesmo dia" do mês anterior — limitado ao último dia real daquele mês
+  // (ex: hoje é 31/06 não existe; se activeMonth for um mês com mais dias que
+  // o anterior, usamos o último dia disponível do mês anterior)
+  const diaAteHojeNum = Math.min(new Date().getDate(), ultimoDiaNum, ultimoDiaAnteriorNum);
+  // Se o mês selecionado não é o mês corrente (ex: usuário navegou para um mês
+  // passado fechado), comparamos o mês inteiro contra o mês anterior inteiro.
+  const hoje = new Date();
+  const ehMesCorrente = activeMonth === `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}`;
+  const ultimoDiaAteComparar = ehMesCorrente ? `${mesAnteriorYM}-${String(diaAteHojeNum).padStart(2,'0')}` : ultimoDiaAnteriorTotal;
+
+  const [resumo, diario, porHora, porTipo, metas, resumoMesAnterior, resumoMesAnteriorAteDia] = await Promise.all([
     buscarResumoFaturamento(primeiroDia, ultimoDia, lojaFil),
     buscarFaturamentoDiario(primeiroDia, ultimoDia, lojaFil),
     buscarVendasPorHoraPeriodo(primeiroDia, ultimoDia, lojaFil),
     buscarFaturamentoPorTipo(primeiroDia, ultimoDia, lojaFil),
     buscarMetasPeriodo(primeiroDia, primeiroDia, lojaFil),
+    buscarResumoFaturamento(primeiroDiaAnterior, ultimoDiaAnteriorTotal, lojaFil),
+    buscarResumoFaturamento(primeiroDiaAnterior, ultimoDiaAteComparar, lojaFil),
   ]);
   console.log(`[perf] renderMensalLeve fetch: ${Math.round(performance.now() - tM)}ms`);
 
@@ -2096,6 +2138,21 @@ async function renderMensalLeve() {
   const metaPorLoja = {};
   metas.forEach(m => { metaPorLoja[m.loja] = (metaPorLoja[m.loja] || 0) + m.valor; });
 
+  // Crescimento por loja vs. mês anterior
+  //  - crescFatPorLoja: faturamento (até o dia de hoje) vs. mesmo intervalo do mês anterior
+  //  - crescTendPorLoja: tendência projetada vs. faturamento TOTAL fechado do mês anterior
+  const fatMesAnteriorAteDiaPorLoja = {};
+  resumoMesAnteriorAteDia.forEach(r => { fatMesAnteriorAteDiaPorLoja[r.loja] = r.fat; });
+  const fatMesAnteriorTotalPorLoja = {};
+  resumoMesAnterior.forEach(r => { fatMesAnteriorTotalPorLoja[r.loja] = r.fat; });
+
+  const crescFatPorLoja = {};
+  const crescTendPorLoja = {};
+  comDados.forEach(r => {
+    const baseFat = fatMesAnteriorAteDiaPorLoja[r.loja];
+    if (baseFat > 0) crescFatPorLoja[r.loja] = ((r.fat - baseFat) / baseFat) * 100;
+  });
+
   // Média/dia e tendência por loja, calculados a partir da série diária por loja
   const diarioPorLoja = {};
   diario.forEach(r => {
@@ -2107,7 +2164,7 @@ async function renderMensalLeve() {
     Object.entries(dias).forEach(([data, valor]) => allRowsSimulado.push({ loja, data, valor }));
   });
 
-  makeLojasRows(byLoja, document.getElementById('mensalLojas'), allRowsSimulado, uteisMes, porTipo, uteisRestantes, metaPorLoja);
+  makeLojasRows(byLoja, document.getElementById('mensalLojas'), allRowsSimulado, uteisMes, porTipo, uteisRestantes, metaPorLoja, crescFatPorLoja, fatMesAnteriorTotalPorLoja);
 
   const lojasSort = comDados.map(r => r.loja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
   const colors = lojasSort.map(l => lojaColorMap[l] || '#4F7EFF');
@@ -3753,6 +3810,19 @@ async function buscarRankingProdutos(dataInicio, dataFim, lojaNome, marca, limit
   }));
 }
 
+// ── Busca de produtos por descrição ou código de barras ─────────────────────
+async function buscarProdutosPorTexto(query, dataInicio, dataFim, lojaNome, marca, limite = 200) {
+  const rows = await callRpc('fn_buscar_produtos', {
+    p_query: query, p_data_inicio: dataInicio, p_data_fim: dataFim,
+    p_loja_id: lojaIdPorNome(lojaNome), p_marca: marca || null, p_limite: limite
+  }, false);
+  return rows.map(r => ({
+    produto: r.produto, marca: r.marca, barras: r.barras,
+    fat: parseFloat(r.faturamento), qty: parseFloat(r.quantidade), preco: parseFloat(r.preco_medio),
+    porLoja: (r.por_loja || []).map(pl => ({ loja: pl.loja, fat: parseFloat(pl.fat), qty: parseFloat(pl.qty) }))
+  }));
+}
+
 // ── Ranking de marcas ────────────────────────────────────────────────────────
 async function buscarRankingMarcas(dataInicio, dataFim, lojaNome, limite = 100) {
   const rows = await callRpc('fn_ranking_marcas', {
@@ -4982,8 +5052,15 @@ async function exportMarcaPDF() {
   }
 }
 
+let buscaProdutoDebounce = null;
 function renderBuscaProduto() {
-  const query     = (document.getElementById('prodSearch').value || '').trim().toLowerCase();
+  // Debounce simples — evita disparar uma busca no banco a cada tecla digitada
+  clearTimeout(buscaProdutoDebounce);
+  buscaProdutoDebounce = setTimeout(() => renderBuscaProdutoAsync(), 300);
+}
+
+async function renderBuscaProdutoAsync() {
+  const query     = (document.getElementById('prodSearch').value || '').trim();
   const resultDiv = document.getElementById('prodSearchResult');
   const listDiv   = document.getElementById('prodSearchList');
   const status    = document.getElementById('prodSearchStatus');
@@ -4994,37 +5071,39 @@ function renderBuscaProduto() {
     return;
   }
 
-  // Usa getFilteredProdRows() para respeitar período, loja e marca selecionados
-  const filteredRows = getFilteredProdRows().filter(r =>
-    r.produto.toLowerCase().includes(query) ||
-    (r.barras && r.barras.toLowerCase().includes(query))
-  );
+  status.textContent = 'Buscando...';
 
-  if (!filteredRows.length) {
+  // Usa os mesmos filtros de período/loja/marca já selecionados na tela,
+  // igual ao ranking principal — busca direto no banco (fn_buscar_produtos),
+  // não no array local prodData (que só existe se houve upload nesta sessão).
+  const de      = document.getElementById('prodMesAnoDE').value;
+  const ate     = document.getElementById('prodMesAnoATE').value;
+  const lojaFil = document.getElementById('prodLojaFilter').value;
+  const marcaFil= document.getElementById('prodMarcaFilter')?.value || '';
+  const dataInicio = de  || '2000-01-01';
+  const dataFim    = ate || new Date().toISOString().split('T')[0];
+
+  const resultados = await buscarProdutosPorTexto(query, dataInicio, dataFim, lojaFil, marcaFil, 200);
+
+  // Confere se a busca ainda corresponde ao texto atual do campo (evita
+  // mostrar resultado de uma busca antiga se o usuário já digitou outra coisa)
+  if ((document.getElementById('prodSearch').value || '').trim() !== query) return;
+
+  if (!resultados.length) {
     resultDiv.style.display = 'block';
     listDiv.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:12px 0">Nenhum produto encontrado com os filtros aplicados.</div>';
     status.textContent = '0 resultados';
     return;
   }
 
-  // Agrupa por código de barras (mesma lógica do ranking)
-  const byBarras = {};
-  filteredRows.forEach(r => {
-    const key = r.barras && r.barras.length > 3 ? r.barras : `__${r.produto}__`;
-    if (!byBarras[key]) byBarras[key] = { fat: 0, qty: 0, marca: r.marca, descrs: {}, lojas: {} };
-    byBarras[key].fat += r.valor;
-    byBarras[key].qty += (r.quantidade || 1);
-    byBarras[key].descrs[r.produto] = (byBarras[key].descrs[r.produto] || 0) + (r.quantidade || 1);
-    if (!byBarras[key].lojas[r.loja]) byBarras[key].lojas[r.loja] = { fat: 0, qty: 0 };
-    byBarras[key].lojas[r.loja].fat += r.valor;
-    byBarras[key].lojas[r.loja].qty += (r.quantidade || 1);
+  // Converte para o formato [nome, {fat, qty, marca, barras, lojas}] já
+  // esperado pelo restante da função (lojas vem do campo por_loja embutido
+  // na própria função de busca do banco)
+  const sorted = resultados.map(r => {
+    const lojas = {};
+    (r.porLoja || []).forEach(pl => { lojas[pl.loja] = { fat: pl.fat, qty: pl.qty }; });
+    return [r.produto, { fat: r.fat, qty: r.qty, marca: r.marca, barras: r.barras, lojas }];
   });
-
-  // Converte usando descrição mais frequente
-  const sorted = Object.entries(byBarras).map(([key, d]) => {
-    const bestDescr = Object.entries(d.descrs).sort((a,b) => b[1]-a[1])[0][0];
-    return [bestDescr, { ...d, barras: key.startsWith('__') ? '' : key }];
-  }).sort((a,b) => b[1].fat - a[1].fat);
 
   status.textContent = `${sorted.length} produto(s) encontrado(s)`;
   resultDiv.style.display = 'block';
