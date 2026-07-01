@@ -4059,6 +4059,20 @@ async function buscarMarcaPorLoja(marca, dataInicio, dataFim, lojaNome) {
   }));
 }
 
+// ── Detalhamento de um produto por loja (usado ao clicar no ranking de produtos) ─
+async function buscarProdutoPorLoja(barras, produto, dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_produto_por_loja', {
+    p_barras: barras && barras.length > 3 ? barras : null,
+    p_produto: produto,
+    p_data_inicio: dataInicio, p_data_fim: dataFim,
+    p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({
+    loja: r.loja_nome, fat: parseFloat(r.faturamento),
+    qty: parseFloat(r.quantidade), preco: parseFloat(r.preco_medio)
+  }));
+}
+
 async function buscarProdutosPorTexto(query, dataInicio, dataFim, lojaNome, marca, limite = 200) {
   const rows = await callRpc('fn_buscar_produtos', {
     p_query: query, p_data_inicio: dataInicio, p_data_fim: dataFim,
@@ -4582,38 +4596,48 @@ function buildRankingRows(container, sorted, maxVal, limit, showQtyLabel, sortBy
       icon.textContent = '▲';
 
       if (showQtyLabel) {
-        // ── É UM PRODUTO — detalhamento por loja via array local (legado) ──
-        // (O ranking de produtos ainda usa prodData; o detalhamento por loja
-        // de produto via banco ficará para uma próxima iteração)
-        const byLoja = {};
-        const key = barras && barras.length > 3 ? barras : `__${name}__`;
-        getFilteredProdRows().forEach(r => {
-          const rKey = r.barras && r.barras.length > 3 ? r.barras : `__${r.produto}__`;
-          if (rKey !== key) return;
-          if (!byLoja[r.loja]) byLoja[r.loja] = { fat: 0, qty: 0 };
-          byLoja[r.loja].fat += r.valor;
-          byLoja[r.loja].qty += (r.quantidade || 1);
-        });
-        const lojas = Object.entries(byLoja).sort((a,b) => b[1].fat - a[1].fat);
-        if (!lojas.length) {
-          detalhe.innerHTML = '<div style="padding:10px 14px;color:var(--text2);font-size:13px">Sem dados por loja disponíveis.</div>';
-        } else {
-          detalhe.innerHTML = lojas.map(([loja, ld]) => {
-            const color = lojaColorMap[loja] || '#4F7EFF';
-            const tm = ld.qty > 0 ? ld.fat / ld.qty : 0;
+        // ── É UM PRODUTO — busca detalhamento por loja direto do banco ──────
+        // Antes usava getFilteredProdRows() (array local que fica vazio quando
+        // os dados vêm do banco), causando "Sem dados por loja disponíveis".
+        // Agora busca via fn_produto_por_loja, obedecendo todos os filtros ativos.
+        detalhe.innerHTML = '<div style="padding:10px 14px;color:var(--text2);font-size:13px">Carregando...</div>';
+
+        const deM     = document.getElementById('prodMesAnoDE')?.value;
+        const ateM    = document.getElementById('prodMesAnoATE')?.value;
+        const lojaFil = document.getElementById('prodLojaFilter')?.value || '';
+        let dataInicio = '2000-01-01';
+        let dataFim    = new Date().toISOString().split('T')[0];
+        if (deM) dataInicio = `${deM}-01`;
+        if (ateM) {
+          const [y, m] = ateM.split('-').map(Number);
+          dataFim = `${ateM}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
+        }
+
+        buscarProdutoPorLoja(barras, name, dataInicio, dataFim, lojaFil).then(lojas => {
+          if (!lojas.length) {
+            detalhe.innerHTML = '<div style="padding:10px 14px;color:var(--text2);font-size:13px">Sem dados por loja para este produto.</div>';
+            return;
+          }
+          const totalFat = lojas.reduce((s, l) => s + l.fat, 0);
+          detalhe.innerHTML = lojas.map(l => {
+            const color = lojaColorMap[l.loja] || '#4F7EFF';
+            const pct = totalFat > 0 ? (l.fat / totalFat * 100).toFixed(1) : '0.0';
             return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--border);">
               <div style="display:flex;align-items:center;gap:8px">
                 <div style="width:8px;height:8px;border-radius:2px;background:${color};flex-shrink:0"></div>
-                <span style="font-size:13px;font-weight:500;color:var(--text)">${loja}</span>
+                <span style="font-size:13px;font-weight:500;color:var(--text)">${l.loja}</span>
+                <span style="font-size:11px;color:var(--text3)">${pct}%</span>
               </div>
               <div style="display:flex;gap:20px;text-align:right">
-                <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Qtd</div><div style="font-size:13px;font-weight:600;color:var(--text)">${fmtNum(ld.qty)} un</div></div>
-                <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Faturamento</div><div style="font-size:13px;font-weight:600;color:${color}">${fmt(ld.fat)}</div></div>
-                <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Preço médio</div><div style="font-size:13px;font-weight:600;color:var(--text)">${fmt(tm)}</div></div>
+                <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Qtd</div><div style="font-size:13px;font-weight:600;color:var(--text)">${fmtNum(l.qty)} un</div></div>
+                <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Faturamento</div><div style="font-size:13px;font-weight:600;color:${color}">${fmt(l.fat)}</div></div>
+                <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Preço médio</div><div style="font-size:13px;font-weight:600;color:var(--text)">${fmt(l.preco)}</div></div>
               </div>
             </div>`;
           }).join('');
-        }
+        }).catch(() => {
+          detalhe.innerHTML = '<div style="padding:10px 14px;color:var(--red);font-size:13px">Erro ao carregar dados por loja.</div>';
+        });
 
       } else {
         // ── É UMA MARCA — comportamento condicional dependendo do filtro de loja ──
