@@ -378,8 +378,55 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
       <label>Senha</label>
       <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
     </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:-4px 0 14px 2px;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text2);cursor:pointer;user-select:none;">
+        <input type="checkbox" id="loginLembrar" style="width:14px;height:14px;cursor:pointer;"> Lembrar-me neste dispositivo
+      </label>
+      <a href="#" onclick="abrirEsqueciSenha();return false;" style="font-size:12.5px;color:var(--blue2);text-decoration:none;">Esqueci a senha</a>
+    </div>
     <button class="login-btn" id="loginBtn" onclick="fazerLogin()">Entrar</button>
     <div class="login-loading" id="loginLoading">Verificando credenciais...</div>
+  </div>
+</div>
+
+<!-- ════════════════ MODAL: ESQUECI A SENHA ════════════════ -->
+<div class="modal-overlay" id="esqueciSenhaModal">
+  <div class="modal-box" style="max-width:380px">
+    <h3>Redefinir senha</h3>
+    <p style="font-size:13px;color:var(--text2);margin:-8px 0 16px;line-height:1.5;">
+      Informe seu e-mail cadastrado. Vamos enviar um link para você criar uma senha nova — por segurança, não enviamos a senha atual por e-mail.
+    </p>
+    <div class="modal-field">
+      <label>E-mail</label>
+      <input type="email" id="esqueciSenhaEmail" placeholder="seu-email@exemplo.com">
+    </div>
+    <div id="esqueciSenhaMsg" style="font-size:12.5px;margin:4px 0 8px;display:none;"></div>
+    <div class="modal-actions">
+      <button class="btn-cancelar" onclick="fecharEsqueciSenha()">Cancelar</button>
+      <button class="btn-confirmar" id="esqueciSenhaBtn" onclick="enviarLinkRedefinicao()">Enviar link</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════ MODAL: DEFINIR NOVA SENHA (após clicar no link do e-mail) ════════════════ -->
+<div class="modal-overlay" id="novaSenhaModal">
+  <div class="modal-box" style="max-width:380px">
+    <h3>Criar nova senha</h3>
+    <p style="font-size:13px;color:var(--text2);margin:-8px 0 16px;line-height:1.5;">
+      Defina sua nova senha de acesso ao painel.
+    </p>
+    <div class="modal-field">
+      <label>Nova senha</label>
+      <input type="password" id="novaSenhaInput" placeholder="Mínimo 6 caracteres">
+    </div>
+    <div class="modal-field">
+      <label>Confirmar nova senha</label>
+      <input type="password" id="novaSenhaConfirma" placeholder="Repita a senha">
+    </div>
+    <div id="novaSenhaMsg" style="font-size:12.5px;margin:4px 0 8px;display:none;"></div>
+    <div class="modal-actions">
+      <button class="btn-confirmar" id="novaSenhaBtn" onclick="salvarNovaSenha()" style="width:100%">Salvar nova senha</button>
+    </div>
   </div>
 </div>
 
@@ -423,6 +470,10 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
       <label>Lojas liberadas</label>
       <div class="loja-checkbox-list" id="modalLojasList"></div>
     </div>
+    <div class="modal-field" id="modalAbasField">
+      <label>Abas liberadas <span style="font-weight:400;color:var(--text2);font-size:11.5px;">(nenhuma marcada = todas liberadas)</span></label>
+      <div class="loja-checkbox-list" id="modalAbasList"></div>
+    </div>
     <div class="modal-actions">
       <button class="btn-cancelar" onclick="fecharUserModal()">Cancelar</button>
       <button class="btn-confirmar" onclick="salvarUsuario()">Salvar</button>
@@ -465,16 +516,16 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 
 <div id="dashboardArea" style="display:none">
   <div class="tabs">
-    <button class="tab active" onclick="switchTab('diario', this)">📅 Visão Diária</button>
-    <button class="tab" onclick="switchTab('mensal', this)">🗓️ Visão Mensal</button>
-    <button class="tab" onclick="switchTab('fatmeta', this)">🎯 Fat x Meta</button>
-    <button class="tab" onclick="switchTab('finexec', this)">📊 Financeiro Executivo</button>
-    <button class="tab" onclick="switchTab('vendedores', this)">🏆 Vendedores</button>
-    <button class="tab" onclick="switchTab('produtos', this)">📦 Produtos & Marcas</button>
-    <button class="tab" onclick="switchTab('financeiro', this)">💰 Financeiro</button>
-    <button class="tab" onclick="switchTab('pagamentos', this)">💳 Pagamentos</button>
-    <button class="tab" onclick="switchTab('analise', this)">🔍 Análise</button>
-    <button class="tab" onclick="switchTab('evolucao', this)">📈 Evolução</button>
+    <button class="tab active" id="tabBtnDiario" onclick="switchTab('diario', this)">📅 Visão Diária</button>
+    <button class="tab" id="tabBtnMensal" onclick="switchTab('mensal', this)">🗓️ Visão Mensal</button>
+    <button class="tab" id="tabBtnFatmeta" onclick="switchTab('fatmeta', this)">🎯 Fat x Meta</button>
+    <button class="tab" id="tabBtnFinexec" onclick="switchTab('finexec', this)">📊 Financeiro Executivo</button>
+    <button class="tab" id="tabBtnVendedores" onclick="switchTab('vendedores', this)">🏆 Vendedores</button>
+    <button class="tab" id="tabBtnProdutos" onclick="switchTab('produtos', this)">📦 Produtos & Marcas</button>
+    <button class="tab" id="tabBtnFinanceiro" onclick="switchTab('financeiro', this)">💰 Financeiro</button>
+    <button class="tab" id="tabBtnPagamentos" onclick="switchTab('pagamentos', this)">💳 Pagamentos</button>
+    <button class="tab" id="tabBtnAnalise" onclick="switchTab('analise', this)">🔍 Análise</button>
+    <button class="tab" id="tabBtnEvolucao" onclick="switchTab('evolucao', this)">📈 Evolução</button>
     <button class="tab" id="tabBtnConfig" onclick="switchTab('config', this)" style="display:none">⚙ Configurações</button>
   </div>
 
@@ -1207,7 +1258,18 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 // ════════════════════════════════════════════════════════════════════════════
 const SUPABASE_URL = 'https://hayeejmhelkmnizxpbji.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_GMYVzSmQNzMe9CkRqJdxKA_pth_DdYP';
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+// "Lembrar-me": controla ONDE a sessão fica guardada no navegador, nunca a
+// senha em si (a senha nunca é salva em lugar nenhum do front-end).
+// - Marcado  -> localStorage  (sessão sobrevive ao fechar o navegador)
+// - Desmarcado (padrão) -> sessionStorage (sessão é apagada ao fechar a aba/navegador,
+//   mais seguro em computadores compartilhados)
+// A escolha feita no último login é lembrada via um único valor em
+// localStorage (só a preferência on/off, não a sessão nem a senha).
+const LEMBRAR_LOGIN_KEY = 'grs_lembrar_login';
+const lembrarAtivo = localStorage.getItem(LEMBRAR_LOGIN_KEY) === '1';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { storage: lembrarAtivo ? window.localStorage : window.sessionStorage }
+});
 
 let currentUser   = null;  // { id, email }
 let currentPerfil = null;  // { id, nome, email, papel, ativo }
@@ -1227,11 +1289,25 @@ async function fazerLogin() {
   const errEl = document.getElementById('loginError');
   const btn   = document.getElementById('loginBtn');
   const loading = document.getElementById('loginLoading');
+  const lembrar = document.getElementById('loginLembrar')?.checked || false;
 
   errEl.style.display = 'none';
   if (!email || !senha) {
     errEl.textContent = 'Informe e-mail e senha.';
     errEl.style.display = 'block';
+    return;
+  }
+
+  // O cliente Supabase já foi criado usando localStorage ou sessionStorage
+  // com base na última preferência salva. Se o usuário mudou o checkbox
+  // agora, precisamos recriar o cliente com o storage certo ANTES de logar
+  // — a forma mais segura de fazer isso é salvar a preferência e recarregar
+  // a página uma vez (a sessão ainda não existe, então não há nada a perder).
+  const prefAtual = localStorage.getItem(LEMBRAR_LOGIN_KEY) === '1';
+  if (lembrar !== prefAtual) {
+    localStorage.setItem(LEMBRAR_LOGIN_KEY, lembrar ? '1' : '0');
+    sessionStorage.setItem('grs_pending_login_email', email); // preserva o e-mail digitado após o reload
+    window.location.reload();
     return;
   }
 
@@ -1312,6 +1388,37 @@ async function iniciarAposLogin() {
   // Mostra aba Configurações apenas para admin
   if (isAdmin()) document.getElementById('tabBtnConfig').style.display = 'inline-block';
 
+  // Aplica restrição de abas (visualizador/gerente) — admin sempre vê tudo.
+  // Sem nenhuma linha em perfis_abas para o usuário = todas as abas liberadas
+  // (compatibilidade com usuários cadastrados antes desta funcionalidade).
+  abasPermitidasUsuario = null;
+  if (!isAdmin()) {
+    try {
+      const { data: abasPermitidasData } = await sb.from('perfis_abas').select('aba').eq('perfil_id', currentUser.id);
+      const abasPermitidas = (abasPermitidasData || []).map(r => r.aba);
+      if (abasPermitidas.length > 0) {
+        abasPermitidasUsuario = abasPermitidas; // usado por switchTab() para bloquear navegação não autorizada
+        let primeiraPermitidaId = null;
+        ABAS_CONTROLAVEIS.forEach(a => {
+          const permitido = abasPermitidas.includes(a.id);
+          const btn = document.getElementById(a.idBtn);
+          if (btn) btn.style.display = permitido ? '' : 'none';
+          if (permitido && !primeiraPermitidaId) primeiraPermitidaId = a.id;
+        });
+        // Se a aba atualmente ativa (Visão Diária, por padrão) não está liberada
+        // para este usuário, troca automaticamente para a primeira permitida.
+        const abaAtivaBtn = document.querySelector('.tab.active');
+        const abaAtivaId = abaAtivaBtn?.id ? ABAS_CONTROLAVEIS.find(a => a.idBtn === abaAtivaBtn.id)?.id : 'diario';
+        if (abaAtivaId && !abasPermitidas.includes(abaAtivaId) && primeiraPermitidaId) {
+          const novoBtn = document.getElementById(ABAS_CONTROLAVEIS.find(a => a.id === primeiraPermitidaId).idBtn);
+          if (novoBtn) switchTab(primeiraPermitidaId, novoBtn);
+        }
+      }
+    } catch (e) {
+      console.error('[iniciarAposLogin] Erro ao aplicar permissões de aba:', e);
+    }
+  }
+
   // Esconde botão de carregar arquivo para visualizador
   if (!podeEscrever()) {
     const btnCarregar = document.getElementById('btnCarregarLoja');
@@ -1362,6 +1469,96 @@ async function iniciarAposLogin() {
   if (isAdmin()) carregarListaUsuarios(); // não bloqueia a renderização do dashboard
 }
 
+// ── Esqueci a senha — envia link de redefinição (nunca a senha em si) ──────
+function abrirEsqueciSenha() {
+  document.getElementById('esqueciSenhaEmail').value = document.getElementById('loginEmail').value.trim();
+  document.getElementById('esqueciSenhaMsg').style.display = 'none';
+  document.getElementById('esqueciSenhaModal').classList.add('show');
+}
+
+function fecharEsqueciSenha() {
+  document.getElementById('esqueciSenhaModal').classList.remove('show');
+}
+
+async function enviarLinkRedefinicao() {
+  const email = document.getElementById('esqueciSenhaEmail').value.trim();
+  const msg = document.getElementById('esqueciSenhaMsg');
+  const btn = document.getElementById('esqueciSenhaBtn');
+  if (!email) {
+    msg.textContent = 'Informe seu e-mail.';
+    msg.style.color = 'var(--red)';
+    msg.style.display = 'block';
+    return;
+  }
+  btn.disabled = true;
+  try {
+    // redirectTo aponta para o próprio app — o Supabase adiciona os parâmetros
+    // necessários na URL, e o listener de PASSWORD_RECOVERY (mais abaixo)
+    // detecta o retorno e abre a tela de criar nova senha.
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname
+    });
+    if (error) throw error;
+    msg.textContent = 'Se este e-mail estiver cadastrado, você vai receber um link para redefinir sua senha em instantes.';
+    msg.style.color = 'var(--green)';
+    msg.style.display = 'block';
+  } catch (e) {
+    // Mensagem genérica por segurança — não confirma nem nega se o e-mail existe no sistema
+    msg.textContent = 'Se este e-mail estiver cadastrado, você vai receber um link para redefinir sua senha em instantes.';
+    msg.style.color = 'var(--green)';
+    msg.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function salvarNovaSenha() {
+  const senha = document.getElementById('novaSenhaInput').value;
+  const confirma = document.getElementById('novaSenhaConfirma').value;
+  const msg = document.getElementById('novaSenhaMsg');
+  const btn = document.getElementById('novaSenhaBtn');
+
+  if (!senha || senha.length < 6) {
+    msg.textContent = 'A senha precisa ter ao menos 6 caracteres.';
+    msg.style.color = 'var(--red)';
+    msg.style.display = 'block';
+    return;
+  }
+  if (senha !== confirma) {
+    msg.textContent = 'As senhas não coincidem.';
+    msg.style.color = 'var(--red)';
+    msg.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    const { error } = await sb.auth.updateUser({ password: senha });
+    if (error) throw error;
+    msg.textContent = 'Senha atualizada! Redirecionando...';
+    msg.style.color = 'var(--green)';
+    msg.style.display = 'block';
+    setTimeout(() => {
+      document.getElementById('novaSenhaModal').classList.remove('show');
+      window.location.href = window.location.origin + window.location.pathname; // recarrega limpo, sem os parâmetros do link
+    }, 1500);
+  } catch (e) {
+    msg.textContent = e.message || 'Não foi possível atualizar a senha. Tente solicitar um novo link.';
+    msg.style.color = 'var(--red)';
+    msg.style.display = 'block';
+    btn.disabled = false;
+  }
+}
+
+// Detecta quando o usuário volta pelo link de redefinição de senha do e-mail.
+// O Supabase dispara o evento PASSWORD_RECOVERY via onAuthStateChange nesse caso.
+sb.auth.onAuthStateChange((event) => {
+  if (event === 'PASSWORD_RECOVERY') {
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('novaSenhaModal').classList.add('show');
+  }
+});
+
 // ── Verifica sessão existente ao carregar a página ──────────────────────────
 async function verificarSessaoExistente() {
   const { data } = await sb.auth.getSession();
@@ -1385,9 +1582,26 @@ async function verificarSessaoExistente() {
 // ════════════════════════════════════════════════════════════════════════════
 let usuarioEditandoId = null;
 
+// Abas que podem ser restritas por usuário (visualizador/gerente). 'config'
+// fica de fora porque já é exclusiva de admin por outro mecanismo.
+const ABAS_CONTROLAVEIS = [
+  { id: 'diario',     nome: '📅 Visão Diária',         idBtn: 'tabBtnDiario' },
+  { id: 'mensal',     nome: '🗓️ Visão Mensal',         idBtn: 'tabBtnMensal' },
+  { id: 'fatmeta',    nome: '🎯 Fat x Meta',            idBtn: 'tabBtnFatmeta' },
+  { id: 'finexec',    nome: '📊 Financeiro Executivo',  idBtn: 'tabBtnFinexec' },
+  { id: 'vendedores', nome: '🏆 Vendedores',            idBtn: 'tabBtnVendedores' },
+  { id: 'produtos',   nome: '📦 Produtos & Marcas',     idBtn: 'tabBtnProdutos' },
+  { id: 'financeiro', nome: '💰 Financeiro',            idBtn: 'tabBtnFinanceiro' },
+  { id: 'pagamentos', nome: '💳 Pagamentos',            idBtn: 'tabBtnPagamentos' },
+  { id: 'analise',    nome: '🔍 Análise',               idBtn: 'tabBtnAnalise' },
+  { id: 'evolucao',   nome: '📈 Evolução',              idBtn: 'tabBtnEvolucao' },
+];
+
 function toggleLojasField() {
   const papel = document.getElementById('modalPapel').value;
-  document.getElementById('modalLojasField').style.display = papel === 'admin' ? 'none' : 'block';
+  const ehAdmin = papel === 'admin';
+  document.getElementById('modalLojasField').style.display = ehAdmin ? 'none' : 'block';
+  document.getElementById('modalAbasField').style.display = ehAdmin ? 'none' : 'block';
 }
 
 function abrirUserModal(perfil) {
@@ -1407,11 +1621,23 @@ function abrirUserModal(perfil) {
     `<label class="loja-checkbox-item"><input type="checkbox" value="${l.id}" class="loja-check"> ${l.nome}</label>`
   ).join('');
 
+  // Popula checkboxes de abas
+  const abasListEl = document.getElementById('modalAbasList');
+  abasListEl.innerHTML = ABAS_CONTROLAVEIS.map(a =>
+    `<label class="loja-checkbox-item"><input type="checkbox" value="${a.id}" class="aba-check"> ${a.nome}</label>`
+  ).join('');
+
   if (perfil) {
     sb.from('perfis_lojas').select('loja_id').eq('perfil_id', perfil.id).then(({ data }) => {
       const idsPermitidos = (data || []).map(r => r.loja_id);
       document.querySelectorAll('.loja-check').forEach(cb => {
         cb.checked = idsPermitidos.includes(cb.value);
+      });
+    });
+    sb.from('perfis_abas').select('aba').eq('perfil_id', perfil.id).then(({ data }) => {
+      const abasPermitidas = (data || []).map(r => r.aba);
+      document.querySelectorAll('.aba-check').forEach(cb => {
+        cb.checked = abasPermitidas.includes(cb.value);
       });
     });
   }
@@ -1430,6 +1656,7 @@ async function salvarUsuario() {
   const senha = document.getElementById('modalSenha').value;
   const papel = document.getElementById('modalPapel').value;
   const lojaIds = [...document.querySelectorAll('.loja-check:checked')].map(cb => cb.value);
+  const abaIds  = [...document.querySelectorAll('.aba-check:checked')].map(cb => cb.value);
 
   if (!nome || !email) { showToast('Preencha nome e e-mail.', 'error'); return; }
 
@@ -1443,6 +1670,12 @@ async function salvarUsuario() {
       await sb.from('perfis_lojas').delete().eq('perfil_id', usuarioEditandoId);
       if (papel !== 'admin' && lojaIds.length) {
         await sb.from('perfis_lojas').insert(lojaIds.map(loja_id => ({ perfil_id: usuarioEditandoId, loja_id })));
+      }
+
+      // Atualiza permissões de aba: remove todas e reinsere (nenhuma marcada = todas liberadas)
+      await sb.from('perfis_abas').delete().eq('perfil_id', usuarioEditandoId);
+      if (papel !== 'admin' && abaIds.length) {
+        await sb.from('perfis_abas').insert(abaIds.map(aba => ({ perfil_id: usuarioEditandoId, aba })));
       }
       showToast('Usuário atualizado.', 'success');
 
@@ -1463,6 +1696,9 @@ async function salvarUsuario() {
 
       if (papel !== 'admin' && lojaIds.length) {
         await sb.from('perfis_lojas').insert(lojaIds.map(loja_id => ({ perfil_id: novoId, loja_id })));
+      }
+      if (papel !== 'admin' && abaIds.length) {
+        await sb.from('perfis_abas').insert(abaIds.map(aba => ({ perfil_id: novoId, aba })));
       }
       showToast('Usuário criado com sucesso.', 'success');
     }
@@ -3811,6 +4047,18 @@ async function buscarRankingProdutos(dataInicio, dataFim, lojaNome, marca, limit
 }
 
 // ── Busca de produtos por descrição ou código de barras ─────────────────────
+// ── Detalhamento de uma marca por loja (usado ao clicar na marca no ranking) ─
+async function buscarMarcaPorLoja(marca, dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_marca_por_loja', {
+    p_marca: marca, p_data_inicio: dataInicio, p_data_fim: dataFim,
+    p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({
+    loja: r.loja_nome, fat: parseFloat(r.faturamento),
+    qty: parseFloat(r.quantidade), preco: parseFloat(r.preco_medio)
+  }));
+}
+
 async function buscarProdutosPorTexto(query, dataInicio, dataFim, lojaNome, marca, limite = 200) {
   const rows = await callRpc('fn_buscar_produtos', {
     p_query: query, p_data_inicio: dataInicio, p_data_fim: dataFim,
@@ -4330,11 +4578,14 @@ function buildRankingRows(container, sorted, maxVal, limit, showQtyLabel, sortBy
         icon.textContent = '▼';
         return;
       }
+      detalhe.style.display = 'block';
+      icon.textContent = '▲';
 
-      // Determinar se é produto (showQtyLabel=true) ou marca (showQtyLabel=false)
-      const byLoja = {};
       if (showQtyLabel) {
-        // Produto — filtra por código de barras ou nome
+        // ── É UM PRODUTO — detalhamento por loja via array local (legado) ──
+        // (O ranking de produtos ainda usa prodData; o detalhamento por loja
+        // de produto via banco ficará para uma próxima iteração)
+        const byLoja = {};
         const key = barras && barras.length > 3 ? barras : `__${name}__`;
         getFilteredProdRows().forEach(r => {
           const rKey = r.barras && r.barras.length > 3 ? r.barras : `__${r.produto}__`;
@@ -4343,38 +4594,116 @@ function buildRankingRows(container, sorted, maxVal, limit, showQtyLabel, sortBy
           byLoja[r.loja].fat += r.valor;
           byLoja[r.loja].qty += (r.quantidade || 1);
         });
-      } else {
-        // Marca — filtra por nome da marca
-        getFilteredProdRows().forEach(r => {
-          if ((r.marca || 'SEM IDENTIF') !== name) return;
-          if (!byLoja[r.loja]) byLoja[r.loja] = { fat: 0, qty: 0 };
-          byLoja[r.loja].fat += r.valor;
-          byLoja[r.loja].qty += (r.quantidade || 1);
-        });
-      }
+        const lojas = Object.entries(byLoja).sort((a,b) => b[1].fat - a[1].fat);
+        if (!lojas.length) {
+          detalhe.innerHTML = '<div style="padding:10px 14px;color:var(--text2);font-size:13px">Sem dados por loja disponíveis.</div>';
+        } else {
+          detalhe.innerHTML = lojas.map(([loja, ld]) => {
+            const color = lojaColorMap[loja] || '#4F7EFF';
+            const tm = ld.qty > 0 ? ld.fat / ld.qty : 0;
+            return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--border);">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="width:8px;height:8px;border-radius:2px;background:${color};flex-shrink:0"></div>
+                <span style="font-size:13px;font-weight:500;color:var(--text)">${loja}</span>
+              </div>
+              <div style="display:flex;gap:20px;text-align:right">
+                <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Qtd</div><div style="font-size:13px;font-weight:600;color:var(--text)">${fmtNum(ld.qty)} un</div></div>
+                <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Faturamento</div><div style="font-size:13px;font-weight:600;color:${color}">${fmt(ld.fat)}</div></div>
+                <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Preço médio</div><div style="font-size:13px;font-weight:600;color:var(--text)">${fmt(tm)}</div></div>
+              </div>
+            </div>`;
+          }).join('');
+        }
 
-      const lojas = Object.entries(byLoja).sort((a,b) => b[1].fat - a[1].fat);
-      if (!lojas.length) {
-        detalhe.innerHTML = '<div style="padding:10px 14px;color:var(--text2);font-size:13px">Sem dados por loja.</div>';
       } else {
-        detalhe.innerHTML = lojas.map(([loja, ld]) => {
-          const color = lojaColorMap[loja] || '#4F7EFF';
-          const tm = ld.qty > 0 ? ld.fat / ld.qty : 0;
-          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--border);">
-            <div style="display:flex;align-items:center;gap:8px">
-              <div style="width:8px;height:8px;border-radius:2px;background:${color};flex-shrink:0"></div>
-              <span style="font-size:13px;font-weight:500;color:var(--text)">${loja}</span>
+        // ── É UMA MARCA — comportamento condicional dependendo do filtro de loja ──
+        // Lê os filtros ativos na aba Produtos & Marcas
+        const de      = document.getElementById('prodMesAnoDE')?.value;
+        const ate     = document.getElementById('prodMesAnoATE')?.value;
+        const lojaFil = document.getElementById('prodLojaFilter')?.value || '';
+        const dataInicio = de  ? `${de}-01`  : '2000-01-01';
+        const [ateY, ateM] = ate ? ate.split('-').map(Number) : [new Date().getFullYear(), new Date().getMonth()+1];
+        const ultimoDia = new Date(ateY, ateM, 0).getDate();
+        const dataFim = ate ? `${ate}-${String(ultimoDia).padStart(2,'0')}` : new Date().toISOString().split('T')[0];
+
+        if (!lojaFil) {
+          // TODAS AS LOJAS → mostra detalhamento por loja daquela marca (via banco)
+          detalhe.innerHTML = '<div style="padding:10px 14px;color:var(--text2);font-size:13px">Carregando...</div>';
+          buscarMarcaPorLoja(name, dataInicio, dataFim, '').then(lojas => {
+            if (!lojas.length) {
+              detalhe.innerHTML = '<div style="padding:10px 14px;color:var(--text2);font-size:13px">Sem dados por loja para esta marca.</div>';
+              return;
+            }
+            detalhe.innerHTML = lojas.map(l => {
+              const color = lojaColorMap[l.loja] || '#4F7EFF';
+              const totalMarca = lojas.reduce((s, r) => s + r.fat, 0);
+              const pct = totalMarca > 0 ? (l.fat / totalMarca * 100).toFixed(1) : '0.0';
+              return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:8px;height:8px;border-radius:2px;background:${color};flex-shrink:0"></div>
+                  <span style="font-size:13px;font-weight:500;color:var(--text)">${l.loja}</span>
+                  <span style="font-size:11px;color:var(--text3)">${pct}%</span>
+                </div>
+                <div style="display:flex;gap:20px;text-align:right">
+                  <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Qtd</div><div style="font-size:13px;font-weight:600;color:var(--text)">${fmtNum(l.qty)} un</div></div>
+                  <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Faturamento</div><div style="font-size:13px;font-weight:600;color:${color}">${fmt(l.fat)}</div></div>
+                  <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Preço médio</div><div style="font-size:13px;font-weight:600;color:var(--text)">${fmt(l.preco)}</div></div>
+                </div>
+              </div>`;
+            }).join('');
+          }).catch(() => {
+            detalhe.innerHTML = '<div style="padding:10px 14px;color:var(--red);font-size:13px">Erro ao carregar dados por loja.</div>';
+          });
+
+        } else {
+          // LOJA ESPECÍFICA → mostra top 10 produtos desta marca nesta loja (via banco)
+          const top10Id = `top10_${i}_${name.replace(/[^a-zA-Z0-9]/g,'_').substring(0,20)}`;
+          if (detalhe.querySelector(`#${top10Id}`)) return; // já carregou antes
+
+          detalhe.innerHTML = `
+            <div style="padding:10px 14px 6px;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em">
+              Top 10 produtos — ${name} em ${lojaFil}
             </div>
-            <div style="display:flex;gap:20px;text-align:right">
-              <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Qtd</div><div style="font-size:13px;font-weight:600;color:var(--text)">${fmtNum(ld.qty)} un</div></div>
-              <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Faturamento</div><div style="font-size:13px;font-weight:600;color:${color}">${fmt(ld.fat)}</div></div>
-              <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Preço médio</div><div style="font-size:13px;font-weight:600;color:var(--text)">${fmt(tm)}</div></div>
-            </div>
-          </div>`;
-        }).join('');
+            <div id="${top10Id}_list" style="padding:8px 14px;color:var(--text2);font-size:13px">Carregando...</div>`;
+
+          buscarRankingProdutos(dataInicio, dataFim, lojaFil, name, 10).then(produtos => {
+            const listEl = document.getElementById(`${top10Id}_list`);
+            if (!listEl) return;
+            if (!produtos.length) {
+              listEl.textContent = 'Nenhum produto encontrado para esta marca e loja.';
+              return;
+            }
+            const maxFatProd = produtos[0].fat || 1;
+            listEl.style.padding = '0';
+            listEl.innerHTML = produtos.map((p, pi) => {
+              const barW = Math.round((p.fat / maxFatProd) * 100);
+              const cls = pi === 0 ? 'gold' : pi === 1 ? 'silver' : pi === 2 ? 'bronze' : '';
+              const displayNome = p.produto.length > 45 ? p.produto.substring(0,44)+'…' : p.produto;
+              const ticket = p.qty > 0 ? p.fat / p.qty : 0;
+              return `<div style="display:grid;grid-template-columns:28px 1fr auto auto;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid var(--border);">
+                <div class="rank-num ${cls}" style="font-size:11px">${pi+1}</div>
+                <div>
+                  <div style="font-size:12.5px;font-weight:600;color:var(--text);line-height:1.3">${displayNome}</div>
+                  <div style="height:4px;background:var(--bg4);border-radius:2px;margin-top:4px;overflow:hidden;">
+                    <div style="width:${barW}%;height:100%;background:var(--orange);border-radius:2px;"></div>
+                  </div>
+                </div>
+                <div style="text-align:right;min-width:100px">
+                  <div style="font-size:13px;font-weight:700;color:var(--orange)">${fmt(p.fat)}</div>
+                  <div style="font-size:11px;color:var(--text3)">${fmtNum(p.qty)} un</div>
+                </div>
+                <div style="text-align:right;min-width:80px">
+                  <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Preço médio</div>
+                  <div style="font-size:12px;font-weight:600;color:var(--text)">${fmt(ticket)}</div>
+                </div>
+              </div>`;
+            }).join('');
+          }).catch(() => {
+            const listEl = document.getElementById(`${top10Id}_list`);
+            if (listEl) listEl.textContent = 'Erro ao carregar produtos.';
+          });
+        }
       }
-      detalhe.style.display = 'block';
-      icon.textContent = '▲';
     });
 
     wrapper.appendChild(div);
@@ -5073,15 +5402,22 @@ async function renderBuscaProdutoAsync() {
 
   status.textContent = 'Buscando...';
 
-  // Usa os mesmos filtros de período/loja/marca já selecionados na tela,
-  // igual ao ranking principal — busca direto no banco (fn_buscar_produtos),
-  // não no array local prodData (que só existe se houve upload nesta sessão).
-  const de      = document.getElementById('prodMesAnoDE').value;
-  const ate     = document.getElementById('prodMesAnoATE').value;
+  // Usa os mesmos filtros de período/loja/marca já selecionados na tela.
+  // Os seletores retornam "YYYY-MM" (ex: "2026-06") — precisa converter para
+  // datas completas ("YYYY-MM-01" e "YYYY-MM-último dia") antes de enviar
+  // ao banco, senão o Postgres não reconhece como date e retorna 0 resultados.
+  const deM     = document.getElementById('prodMesAnoDE').value;
+  const ateM    = document.getElementById('prodMesAnoATE').value;
   const lojaFil = document.getElementById('prodLojaFilter').value;
   const marcaFil= document.getElementById('prodMarcaFilter')?.value || '';
-  const dataInicio = de  || '2000-01-01';
-  const dataFim    = ate || new Date().toISOString().split('T')[0];
+
+  let dataInicio = '2000-01-01';
+  let dataFim    = new Date().toISOString().split('T')[0];
+  if (deM) dataInicio = `${deM}-01`;
+  if (ateM) {
+    const [y, m] = ateM.split('-').map(Number);
+    dataFim = `${ateM}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
+  }
 
   const resultados = await buscarProdutosPorTexto(query, dataInicio, dataFim, lojaFil, marcaFil, 200);
 
@@ -7325,7 +7661,15 @@ async function exportRankingPDF(tipo) {
   showToast(`PDF salvo — Top ${qty} ${tipo}!`, 'success');
 }
 
+let abasPermitidasUsuario = null; // null = sem restrição (admin, ou usuário sem nenhuma aba marcada)
+
 function switchTab(name, btn) {
+  // Bloqueio de verdade (não só visual): mesmo que alguém chame switchTab()
+  // diretamente pelo console, a troca de aba é negada se não for permitida.
+  if (abasPermitidasUsuario && name !== 'config' && !abasPermitidasUsuario.includes(name)) {
+    showToast('Você não tem permissão para acessar esta aba.', 'error');
+    return;
+  }
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
@@ -7344,6 +7688,17 @@ function switchTab(name, btn) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+
+  // ── Restaura preferência de "Lembrar-me" e e-mail digitado (caso a página
+  // tenha recarregado por causa de uma troca de preferência em fazerLogin) ──
+  const lembrarCheckbox = document.getElementById('loginLembrar');
+  if (lembrarCheckbox) lembrarCheckbox.checked = localStorage.getItem(LEMBRAR_LOGIN_KEY) === '1';
+  const pendingEmail = sessionStorage.getItem('grs_pending_login_email');
+  if (pendingEmail) {
+    document.getElementById('loginEmail').value = pendingEmail;
+    sessionStorage.removeItem('grs_pending_login_email');
+    document.getElementById('loginPassword')?.focus();
+  }
 
   // ── Verifica login / sessão existente (substitui o auto-carregar antigo) ──
   verificarSessaoExistente();
