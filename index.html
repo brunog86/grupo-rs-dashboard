@@ -3269,13 +3269,21 @@ async function initDashboard() {
 }
 
 const RAZAO_SOCIAL_MAP = {
+  // DiTudo 20
   'LOTUS VARIEDADES E UTILIDADES LTDA': 'DiTudo 20',
   'DITUDO 20': 'DiTudo 20',
-  'V & A COMERCIO VAREJISTA LTDA': 'América Import L2',
+  // América Import L1
   'DO LAR COMERCIO VAREJISTA LTDA': 'América Import L1',
+  'AMERICA IMPORTADOS': 'América Import L1',
+  'AMERICA IMPORT 1': 'América Import L1',
+  // América Import L2
+  'V & A COMERCIO VAREJISTA LTDA': 'América Import L2',
+  'AMERICA IMPORT 2': 'América Import L2',
+  // Vem Ki Tem
   'VKT UTILIDADES E VARIEDADES LTDA': 'Vem Ki Tem',
   'Vem Ki Tem': 'Vem Ki Tem',
   'VEM KI TEM': 'Vem Ki Tem',
+  // CD
   'CD': 'CD',
   'V & P': 'CD',
   'V & P COMERCIO VAREJISTA LTDA': 'CD',
@@ -3536,7 +3544,8 @@ function loadFinFile(files, tipo) {
         await syncFinanceiroParaSupabase(newRows, tipo);
         showToast(`${newRows.length} lançamentos carregados — ${lojasNovas.join(', ')} atualizada`, 'success');
         salvarLocal();
-        renderFinanceiro();
+        limparRpcCache();
+        await renderFinanceiroLeve();
       }
     };
     reader.readAsArrayBuffer(file);
@@ -5738,23 +5747,29 @@ async function renderFinanceiroLeve() {
   }
 
   const tF = performance.now();
-  const [pagar, receber] = await Promise.all([
+  const [pagar, receber, resumoFin] = await Promise.all([
     buscarListaFinanceiro('pagar',   { loja: pagarLojaFil,   de: dataIni, ate: dataFimEf, situacao: statusFil, fornecedor: fornFil, limite: 2000 }),
     buscarListaFinanceiro('receber', { loja: receberLojaFil, de: dataIni, ate: dataFimEf, situacao: statusFil, fornecedor: fornFil, limite: 2000 }),
+    // Resumo SEM filtro de período — sempre mostra o total real de vencido/a vencer
+    // independente do que estiver selecionado no filtro de período do detalhamento.
+    // Assim os cards "Por Empresa" e os totais de topo são sempre o quadro completo da empresa.
+    buscarResumoFinanceiro(pagarLojaFil || ''),
   ]);
   console.log(`[perf] renderFinanceiroLeve fetch: ${Math.round(performance.now() - tF)}ms`);
 
-  document.getElementById('finNoData').style.display  = (!pagar.length && !receber.length) ? 'block' : 'none';
-  document.getElementById('finContent').style.display = (pagar.length || receber.length)   ? 'block' : 'none';
-  if (!pagar.length && !receber.length) return;
+  document.getElementById('finNoData').style.display  = (!pagar.length && !receber.length && !resumoFin.length) ? 'block' : 'none';
+  document.getElementById('finContent').style.display = (pagar.length || receber.length || resumoFin.length) ? 'block' : 'none';
+  if (!pagar.length && !receber.length && !resumoFin.length) return;
 
-  const hoje = new Date().toISOString().split('T')[0];
-  const pagarVencido  = pagar.filter(r => r.situacao === 'ABERTO' && r.dtVenc && r.dtVenc < hoje).reduce((s,r) => s + r.valorDoc, 0);
-  const pagarAVencer  = pagar.filter(r => r.situacao === 'ABERTO' && (!r.dtVenc || r.dtVenc >= hoje)).reduce((s,r) => s + r.valorDoc, 0);
-  const totalPago     = pagar.filter(r => r.situacao !== 'ABERTO').reduce((s,r) => s + r.valorQuit, 0);
-  const totalAbertoRec= receber.filter(r => r.situacao === 'ABERTO').reduce((s,r) => s + r.valorDoc, 0);
-  const totalRecebido = receber.filter(r => r.situacao !== 'ABERTO').reduce((s,r) => s + r.valorQuit, 0);
-  const saldo         = totalAbertoRec - (pagarVencido + pagarAVencer);
+  // Cards de topo: calculados a partir do resumo (sem filtro de período)
+  const pagarRes   = resumoFin.filter(r => r.tipo === 'pagar');
+  const receberRes = resumoFin.filter(r => r.tipo === 'receber');
+  const pagarVencido   = pagarRes.reduce((s,r) => s + r.vencido, 0);
+  const pagarAVencer   = pagarRes.reduce((s,r) => s + r.aVencer, 0);
+  const totalPago      = pagarRes.reduce((s,r) => s + r.quitado, 0);
+  const totalAbertoRec = receberRes.reduce((s,r) => s + r.vencido + r.aVencer, 0);
+  const totalRecebido  = receberRes.reduce((s,r) => s + r.quitado, 0);
+  const saldo          = totalAbertoRec - (pagarVencido + pagarAVencer);
 
   makeMetrics(document.getElementById('finMetrics'), [
     { label: '⚠ A pagar — vencido',   value: fmt(pagarVencido),  cls: 'down' },
@@ -5776,9 +5791,13 @@ async function renderFinanceiroLeve() {
     selPagar.dataset.populated = '1'; selReceber.dataset.populated = '1';
   }
 
-  buildEmpresaGridGeneric(pagar,   'finPagarEmpresaGrid',   'var(--red)',   'finPagarLojaFilter');
-  buildEmpresaGridGeneric(receber, 'finReceberEmpresaGrid', 'var(--green)', 'finReceberLojaFilter');
+  // Cards Por Empresa: usa o resumo (sem filtro de período) para mostrar
+  // o quadro completo real — vencido/a vencer nunca zerado por filtro de data.
+  buildEmpresaGridFromResumo(resumoFin, 'finPagarEmpresaGrid',   'pagar',   'var(--red)',   'finPagarLojaFilter');
+  buildEmpresaGridFromResumo(resumoFin, 'finReceberEmpresaGrid', 'receber', 'var(--green)', 'finReceberLojaFilter');
 
+  // Detalhamento: usa os dados filtrados pelo período selecionado
+  const hoje = new Date().toISOString().split('T')[0];
   buildFinListGeneric(pagar,   'finPagarList',   'var(--amber)', hoje);
   buildFinListGeneric(receber, 'finReceberList', 'var(--green)', hoje);
 
@@ -5810,7 +5829,64 @@ async function renderFinanceiroLeve() {
   }
 }
 
-// Versões genéricas das funções de montagem visual (extraídas para reuso fora de renderFinanceiro)
+// Constrói os cards "Por Empresa" usando o RESUMO (fn_resumo_financeiro, sem
+// filtro de período), garantindo que vencido/a vencer nunca fique zerado por
+// causa de um filtro de período no detalhamento. buildEmpresaGridGeneric
+// (antiga, baseada nos dados filtrados) ainda existe para outros usos.
+function buildEmpresaGridFromResumo(resumoFin, gridId, tipo, corBorda, lojaFilterId) {
+  const grid = document.getElementById(gridId);
+  grid.innerHTML = '';
+  const rows = resumoFin.filter(r => r.tipo === tipo);
+  if (!rows.length) {
+    grid.innerHTML = '<div style="color:var(--text2);padding:12px 0;font-size:13px">Nenhum dado.</div>';
+    return;
+  }
+  rows.sort((a,b) => (b.vencido + b.aVencer) - (a.vencido + a.aVencer));
+  rows.forEach(r => {
+    const color = lojaColorMap[r.loja] || corBorda;
+    const total = r.vencido + r.aVencer + r.quitado;
+    const row = document.createElement('div');
+    row.style.cssText = `
+      background:var(--bg3); border:1px solid var(--border);
+      border-left:3px solid ${color}; border-radius:var(--radius);
+      padding:14px 18px; display:grid;
+      grid-template-columns:160px 1fr 1fr 1fr 1fr;
+      align-items:center; gap:12px; margin-bottom:10px;
+      cursor:pointer; transition:background 0.2s;
+    `;
+    row.onmouseenter = () => row.style.background = 'var(--bg4)';
+    row.onmouseleave = () => row.style.background = 'var(--bg3)';
+    row.onclick = () => {
+      const sel = document.getElementById(lojaFilterId);
+      sel.value = sel.value === r.loja ? '' : r.loja;
+      renderFinanceiroLeve();
+    };
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:13px">
+        <div style="width:10px;height:10px;border-radius:3px;background:${color};flex-shrink:0"></div>${r.loja}
+      </div>
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:0.06em">⚠ Vencido</div>
+        <div style="font-size:14px;font-weight:800;color:var(--red)">${fmt(r.vencido)}</div>
+      </div>
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:0.06em">📅 A vencer</div>
+        <div style="font-size:14px;font-weight:800;color:var(--amber)">${fmt(r.aVencer)}</div>
+      </div>
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em">Quitado</div>
+        <div style="font-size:14px;font-weight:800;color:var(--text)">${fmt(r.quitado)}</div>
+      </div>
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em">Total</div>
+        <div style="font-size:14px;font-weight:800;color:var(--text)">${fmt(total)}</div>
+      </div>`;
+    grid.appendChild(row);
+  });
+}
+
+// Constrói os cards "Por Empresa" a partir dos lançamentos filtrados (legado —
+// ainda usado quando não há resumo disponível)
 function buildEmpresaGridGeneric(data, gridId, corBorda, lojaFilterId) {
   const grid = document.getElementById(gridId);
   grid.innerHTML = '';
