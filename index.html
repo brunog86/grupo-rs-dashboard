@@ -189,6 +189,20 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 .loja-name { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 10px; }
 .loja-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 .loja-metric-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; font-weight: 700; }
+/* Toggle switch — usado no detalhamento do financeiro */
+.fin-toggle-label { display:flex; align-items:center; gap:7px; cursor:pointer; user-select:none; font-size:12px; color:var(--text2); }
+.fin-toggle-label input[type=checkbox] { display:none; }
+.fin-toggle-track {
+  width:34px; height:18px; border-radius:9px; background:var(--border);
+  position:relative; transition:background 0.2s; flex-shrink:0;
+}
+.fin-toggle-label input:checked ~ .fin-toggle-track { background:var(--blue2); }
+.fin-toggle-track::after {
+  content:''; position:absolute; top:3px; left:3px;
+  width:12px; height:12px; border-radius:50%; background:#fff;
+  transition:transform 0.2s; box-shadow:0 1px 3px rgba(0,0,0,.2);
+}
+.fin-toggle-label input:checked ~ .fin-toggle-track::after { transform:translateX(16px); }
 .loja-metric-value { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
 
 /* CHARTS */
@@ -866,7 +880,9 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
               <div class="filter-label" style="margin-bottom:6px">Situação</div>
               <select class="date-input" id="finStatusFilter" style="width:100%" onchange="renderFinanceiroLeve()">
                 <option value="">Todas</option>
-                <option value="ABERTO">Em aberto</option>
+                <option value="VENCIDO">Vencido</option>
+                <option value="A_VENCER">A vencer</option>
+                <option value="ABERTO">Em aberto (todos)</option>
                 <option value="QUITADO">Quitado / Recebido</option>
               </select>
             </div>
@@ -916,14 +932,28 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
           <div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
               <div class="section-title" style="margin:0;border-left-color:var(--red)">Detalhamento — Contas a Pagar</div>
-              <select class="date-input" id="finPagarLojaFilter" style="font-size:12px;padding:5px 10px" onchange="renderFinanceiroLeve()"><option value="">Todas as lojas</option></select>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <label class="fin-toggle-label" title="Ligar: todos os itens expandidos · Desligar: só datas, clique para expandir">
+                  <input type="checkbox" id="finPagarExpandToggle" checked onchange="toggleFinExpandir('finPagarList', this.checked)">
+                  <span class="fin-toggle-track"></span>
+                  <span>Expandir tudo</span>
+                </label>
+                <select class="date-input" id="finPagarLojaFilter" style="font-size:12px;padding:5px 10px" onchange="renderFinanceiroLeve()"><option value="">Todas as lojas</option></select>
+              </div>
             </div>
             <div id="finPagarList"></div>
           </div>
           <div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
               <div class="section-title" style="margin:0;border-left-color:var(--green)">Detalhamento — Contas a Receber</div>
-              <select class="date-input" id="finReceberLojaFilter" style="font-size:12px;padding:5px 10px" onchange="renderFinanceiroLeve()"><option value="">Todas as lojas</option></select>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <label class="fin-toggle-label" title="Ligar: todos os itens expandidos · Desligar: só datas, clique para expandir">
+                  <input type="checkbox" id="finReceberExpandToggle" checked onchange="toggleFinExpandir('finReceberList', this.checked)">
+                  <span class="fin-toggle-track"></span>
+                  <span>Expandir tudo</span>
+                </label>
+                <select class="date-input" id="finReceberLojaFilter" style="font-size:12px;padding:5px 10px" onchange="renderFinanceiroLeve()"><option value="">Todas as lojas</option></select>
+              </div>
             </div>
             <div id="finReceberList"></div>
           </div>
@@ -5842,6 +5872,22 @@ function buildEmpresaGridGeneric(data, gridId, corBorda, lojaFilterId) {
   if (!lojas.length) grid.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px 0">Nenhum dado.</div>';
 }
 
+// Toggle de expandir/colapsar todos os itens do detalhamento financeiro.
+// Quando o switch está ON (checked), todos os cards de item ficam visíveis.
+// Quando OFF, os cards de item ficam escondidos — o usuário clica no cabeçalho
+// da data para expandir/colapsar individualmente.
+function toggleFinExpandir(listId, expandido) {
+  const listEl = document.getElementById(listId);
+  if (!listEl) return;
+  listEl.querySelectorAll('.fin-items-wrap').forEach(wrap => {
+    wrap.style.display = expandido ? 'block' : 'none';
+  });
+  // Atualiza a seta nos cabeçalhos de data
+  listEl.querySelectorAll('.fin-date-chevron').forEach(ch => {
+    ch.textContent = expandido ? '▲' : '▼';
+  });
+}
+
 function buildFinListGeneric(data, listId, corAberto, hoje) {
   const listEl = document.getElementById(listId);
   listEl.innerHTML = '';
@@ -5849,6 +5895,11 @@ function buildFinListGeneric(data, listId, corAberto, hoje) {
     listEl.innerHTML = '<div style="color:var(--text2);padding:12px 0;font-size:13px">Nenhum lançamento encontrado.</div>';
     return;
   }
+
+  // Lê o estado atual do toggle (expandir tudo = true por padrão)
+  const toggleId = listId === 'finPagarList' ? 'finPagarExpandToggle' : 'finReceberExpandToggle';
+  const expandido = document.getElementById(toggleId)?.checked !== false;
+
   const byDate = {};
   data.forEach(r => {
     const key = r.dtVenc || r.emissao || '0000-00-00';
@@ -5871,19 +5922,31 @@ function buildFinListGeneric(data, listId, corAberto, hoje) {
       padding:10px 16px; margin-top:14px; margin-bottom:4px;
       background:var(--bg3); border-radius:var(--radius-sm);
       border-left:4px solid ${corData};
+      cursor:pointer; user-select:none;
     `;
     dateHeader.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px">
         ${algumVencido ? '<span style="font-size:13px">⚠</span>' : ''}
         <span style="font-size:14px;font-weight:800;color:${corData};letter-spacing:-0.01em">${vencStr}</span>
       </div>
-      <span style="font-size:14px;font-weight:800;color:${corData}">${fmt(totalDia)}</span>`;
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:14px;font-weight:800;color:${corData}">${fmt(totalDia)}</span>
+        <span class="fin-date-chevron" style="font-size:11px;color:var(--text3)">${expandido ? '▲' : '▼'}</span>
+      </div>`;
     listEl.appendChild(dateHeader);
 
     const itemsWrap = document.createElement('div');
-    itemsWrap.style.cssText = `margin-left:16px;`;
+    itemsWrap.className = 'fin-items-wrap';
+    itemsWrap.style.cssText = `margin-left:16px; display:${expandido ? 'block' : 'none'};`;
     const itemsCard = document.createElement('div');
     itemsCard.style.cssText = `background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;`;
+
+    // Clique no cabeçalho da data expande/colapsa só esse grupo
+    dateHeader.addEventListener('click', () => {
+      const aberto = itemsWrap.style.display !== 'none';
+      itemsWrap.style.display = aberto ? 'none' : 'block';
+      dateHeader.querySelector('.fin-date-chevron').textContent = aberto ? '▼' : '▲';
+    });
 
     items.forEach((r, i) => {
       const isAberto = r.situacao === 'ABERTO';
@@ -5920,6 +5983,7 @@ function buildFinListGeneric(data, listId, corAberto, hoje) {
   });
 }
 
+
 function renderFinanceiro() {
   const hasPagar   = finPagarData.length > 0;
   const hasReceber = finReceberData.length > 0;
@@ -5945,7 +6009,12 @@ function renderFinanceiro() {
       if (deFil)  d = d.filter(r => r.dtVenc >= deFil || (!r.dtVenc && r.emissao >= deFil));
       if (ateFil) d = d.filter(r => r.dtVenc <= ateFil || (!r.dtVenc && r.emissao <= ateFil));
     }
-    if (statusFil) d = d.filter(r => r.situacao === statusFil);
+    if (statusFil) {
+      if (statusFil === 'VENCIDO')  d = d.filter(r => r.situacao === 'ABERTO' && r.dtVenc && r.dtVenc < hoje);
+      else if (statusFil === 'A_VENCER') d = d.filter(r => r.situacao === 'ABERTO' && (!r.dtVenc || r.dtVenc >= hoje));
+      else if (statusFil === 'ABERTO')   d = d.filter(r => r.situacao === 'ABERTO');
+      else                               d = d.filter(r => r.situacao !== 'ABERTO');
+    }
     if (fornFil)   d = d.filter(r =>
       (r.fornecedor || '').toLowerCase().includes(fornFil) ||
       (r.historico  || '').toLowerCase().includes(fornFil)
