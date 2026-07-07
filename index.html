@@ -2395,6 +2395,16 @@ async function renderMensalLeve() {
   const metaTotal = metas.reduce((s,m) => s + m.valor, 0);
   const metaPct = metaTotal > 0 ? (totalFat / metaTotal * 100) : null;
 
+  // ── Crescimento global vs. mês anterior ─────────────────────────────────
+  const totalFatAnt = resumoMesAnteriorAteDia.reduce((s,r) => s + r.fat, 0);
+  const totalQtyAnt = resumoMesAnteriorAteDia.reduce((s,r) => s + r.qty, 0);
+  const ticketAnt   = totalQtyAnt > 0 ? totalFatAnt / totalQtyAnt : 0;
+  const crescFatGeral    = totalFatAnt > 0 ? ((totalFat  - totalFatAnt)  / totalFatAnt  * 100) : null;
+  const crescQtyGeral    = totalQtyAnt > 0 ? ((totalQty  - totalQtyAnt)  / totalQtyAnt  * 100) : null;
+  const crescTicketGeral = ticketAnt   > 0 ? ((ticket    - ticketAnt)    / ticketAnt    * 100) : null;
+  const mediaDiariaAnt   = totalFatAnt > 0 && diasComFat.length > 0 ? totalFatAnt / diasComFat.length : 0;
+  const crescMediaGeral  = mediaDiariaAnt > 0 ? ((mediaDiaria - mediaDiariaAnt) / mediaDiariaAnt * 100) : null;
+
   const fmtCresc = (pct) => pct === null ? null : `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1).replace('.',',')}% vs. mês ant.`;
   const clsCresc = (pct) => pct === null ? 'neutral' : pct >= 0 ? 'up' : 'down';
 
@@ -2435,20 +2445,6 @@ async function renderMensalLeve() {
   });
   const fatMesAnteriorTotalPorLoja = {};
   resumoMesAnterior.forEach(r => { fatMesAnteriorTotalPorLoja[r.loja] = r.fat; });
-
-  // Crescimento global (cards gerais)
-  const totalFatAnt = resumoMesAnteriorAteDia.reduce((s,r) => s + r.fat, 0);
-  const totalQtyAnt = resumoMesAnteriorAteDia.reduce((s,r) => s + r.qty, 0);
-  const ticketAnt   = totalQtyAnt > 0 ? totalFatAnt / totalQtyAnt : 0;
-  const crescFatGeral    = totalFatAnt > 0 ? ((totalFat  - totalFatAnt)  / totalFatAnt  * 100) : null;
-  const crescQtyGeral    = totalQtyAnt > 0 ? ((totalQty  - totalQtyAnt)  / totalQtyAnt  * 100) : null;
-  const crescTicketGeral = ticketAnt   > 0 ? ((ticket    - ticketAnt)    / ticketAnt    * 100) : null;
-
-  // Média/dia do mês anterior (para comparar com a média/dia atual)
-  const diasMapAnt = {};
-  resumoMesAnteriorAteDia.forEach(r => {}); // dados agregados, não diários — usamos fat/qty acumulados
-  const mediaDiariaAnt = totalFatAnt > 0 && diasComFat.length > 0 ? totalFatAnt / diasComFat.length : 0;
-  const crescMediaGeral = mediaDiariaAnt > 0 ? ((mediaDiaria - mediaDiariaAnt) / mediaDiariaAnt * 100) : null;
 
   const crescFatPorLoja = {};
   const crescQtyPorLoja = {};
