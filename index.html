@@ -1918,10 +1918,15 @@ const chartDefaults = {
   }
 };
 
-function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisRestantes, metaPorLoja, crescFatPorLoja, fatMesAnteriorTotalPorLoja) {
+function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisRestantes, metaPorLoja, crescFatPorLoja, fatMesAnteriorTotalPorLoja, crescQtyPorLoja, crescTicketPorLoja, fatMesAnteriorAteDiaPorLoja) {
   const lojas = Object.keys(byLoja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
   container.innerHTML = '';
   if (!lojas.length) { container.innerHTML = '<div class="empty"><div class="empty-icon">📭</div>Sem dados para este período</div>'; return; }
+
+  // Helper local para formatar percentual de crescimento
+  const fmtPct = (pct) => pct === undefined || pct === null ? '' :
+    `<div style="font-size:11px;color:${pct>=0?'var(--green)':'var(--red)'};margin-top:2px;">${pct>=0?'▲':'▼'} ${Math.abs(pct).toFixed(1).replace('.',',')}% vs. mês ant.</div>`;
+
   lojas.forEach(l => {
     const d = byLoja[l];
     const ticket = d.qty > 0 ? d.fat / d.qty : 0;
@@ -1942,9 +1947,16 @@ function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisResta
       const diasComFat = Object.keys(diasLoja).filter(dd => diasLoja[dd] > 0);
       if (diasComFat.length > 0) {
         const mediaLoja = d.fat / diasComFat.length;
+        // Crescimento da média/dia: compara a média diária atual da loja com
+        // a média diária do mesmo período do mês anterior (estimada dividindo
+        // o faturamento anterior pelo mesmo número de dias com faturamento).
+        const fatAntLoja = fatMesAnteriorAteDiaPorLoja && fatMesAnteriorAteDiaPorLoja[l];
+        const mediaAntLoja = fatAntLoja && diasComFat.length > 0 ? fatAntLoja / diasComFat.length : 0;
+        const crescMediaLoja = mediaAntLoja > 0 ? ((mediaLoja - mediaAntLoja) / mediaAntLoja * 100) : null;
         mediaDiariaHTML = `<div class="loja-metric">
           <div class="loja-metric-label">Média/dia</div>
           <div class="loja-metric-value" style="color:var(--blue2)">${fmt(mediaLoja)}</div>
+          ${crescMediaLoja !== null ? `<div style="font-size:11px;color:${crescMediaLoja>=0?'var(--green)':'var(--red)'};margin-top:2px;">${crescMediaLoja>=0?'▲':'▼'} ${Math.abs(crescMediaLoja).toFixed(1).replace('.',',')}% vs. mês ant.</div>` : ''}
         </div>`;
         // Tendência = faturamento atual da loja + (média/dia da loja × dias úteis restantes no mês)
         if (uteisRestantes !== undefined && uteisRestantes !== null) {
@@ -1986,10 +1998,12 @@ function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisResta
       <div class="loja-metric">
         <div class="loja-metric-label">Qtd. vendas</div>
         <div class="loja-metric-value">${fmtNum(d.qty)}</div>
+        ${fmtPct(crescQtyPorLoja?.[l])}
       </div>
       <div class="loja-metric">
         <div class="loja-metric-label">Ticket médio</div>
         <div class="loja-metric-value">${fmt(ticket)}</div>
+        ${fmtPct(crescTicketPorLoja?.[l])}
       </div>
       ${mediaDiariaHTML}
       ${tendenciaHTML}`;
@@ -2381,11 +2395,15 @@ async function renderMensalLeve() {
   const metaTotal = metas.reduce((s,m) => s + m.valor, 0);
   const metaPct = metaTotal > 0 ? (totalFat / metaTotal * 100) : null;
 
+  const fmtCresc = (pct) => pct === null ? null : `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1).replace('.',',')}% vs. mês ant.`;
+  const clsCresc = (pct) => pct === null ? 'neutral' : pct >= 0 ? 'up' : 'down';
+
   const metricasMensal = [
-    { label: 'Faturamento do mês', value: fmt(totalFat), sub: `Média/dia: ${fmt(mediaDiaria)}`, cls: 'neutral' },
+    { label: 'Faturamento do mês', value: fmt(totalFat), sub: `Média/dia: ${fmt(mediaDiaria)}${crescFatGeral !== null ? ` · ${fmtCresc(crescFatGeral)}` : ''}`, cls: clsCresc(crescFatGeral) },
     { label: `Tendência (${uteisMes} d.u.)`, value: fmt(tendencia), sub: tendencia > totalFat ? `▲ ${fmt(tendencia - totalFat)} acima do atual` : `▼ ${fmt(totalFat - tendencia)} abaixo do projetado`, cls: tendencia >= totalFat ? 'up' : 'neutral' },
-    { label: 'Total de vendas', value: fmtNum(totalQty) },
-    { label: 'Ticket médio', value: fmt(ticket) },
+    { label: 'Total de vendas', value: fmtNum(totalQty), sub: fmtCresc(crescQtyGeral), cls: clsCresc(crescQtyGeral) },
+    { label: 'Ticket médio', value: fmt(ticket), sub: fmtCresc(crescTicketGeral), cls: clsCresc(crescTicketGeral) },
+    { label: 'Média/dia', value: fmt(mediaDiaria), sub: fmtCresc(crescMediaGeral), cls: clsCresc(crescMediaGeral) },
     { label: 'Lojas ativas', value: comDados.length }
   ];
   if (metaTotal > 0) {
@@ -2408,15 +2426,40 @@ async function renderMensalLeve() {
   //  - crescFatPorLoja: faturamento (até o dia de hoje) vs. mesmo intervalo do mês anterior
   //  - crescTendPorLoja: tendência projetada vs. faturamento TOTAL fechado do mês anterior
   const fatMesAnteriorAteDiaPorLoja = {};
-  resumoMesAnteriorAteDia.forEach(r => { fatMesAnteriorAteDiaPorLoja[r.loja] = r.fat; });
+  const qtyMesAnteriorAteDiaPorLoja = {};
+  const ticketMesAnteriorAteDiaPorLoja = {};
+  resumoMesAnteriorAteDia.forEach(r => {
+    fatMesAnteriorAteDiaPorLoja[r.loja]    = r.fat;
+    qtyMesAnteriorAteDiaPorLoja[r.loja]    = r.qty;
+    ticketMesAnteriorAteDiaPorLoja[r.loja] = r.ticket;
+  });
   const fatMesAnteriorTotalPorLoja = {};
   resumoMesAnterior.forEach(r => { fatMesAnteriorTotalPorLoja[r.loja] = r.fat; });
 
+  // Crescimento global (cards gerais)
+  const totalFatAnt = resumoMesAnteriorAteDia.reduce((s,r) => s + r.fat, 0);
+  const totalQtyAnt = resumoMesAnteriorAteDia.reduce((s,r) => s + r.qty, 0);
+  const ticketAnt   = totalQtyAnt > 0 ? totalFatAnt / totalQtyAnt : 0;
+  const crescFatGeral    = totalFatAnt > 0 ? ((totalFat  - totalFatAnt)  / totalFatAnt  * 100) : null;
+  const crescQtyGeral    = totalQtyAnt > 0 ? ((totalQty  - totalQtyAnt)  / totalQtyAnt  * 100) : null;
+  const crescTicketGeral = ticketAnt   > 0 ? ((ticket    - ticketAnt)    / ticketAnt    * 100) : null;
+
+  // Média/dia do mês anterior (para comparar com a média/dia atual)
+  const diasMapAnt = {};
+  resumoMesAnteriorAteDia.forEach(r => {}); // dados agregados, não diários — usamos fat/qty acumulados
+  const mediaDiariaAnt = totalFatAnt > 0 && diasComFat.length > 0 ? totalFatAnt / diasComFat.length : 0;
+  const crescMediaGeral = mediaDiariaAnt > 0 ? ((mediaDiaria - mediaDiariaAnt) / mediaDiariaAnt * 100) : null;
+
   const crescFatPorLoja = {};
-  const crescTendPorLoja = {};
+  const crescQtyPorLoja = {};
+  const crescTicketPorLoja = {};
   comDados.forEach(r => {
-    const baseFat = fatMesAnteriorAteDiaPorLoja[r.loja];
-    if (baseFat > 0) crescFatPorLoja[r.loja] = ((r.fat - baseFat) / baseFat) * 100;
+    const baseFat    = fatMesAnteriorAteDiaPorLoja[r.loja];
+    const baseQty    = qtyMesAnteriorAteDiaPorLoja[r.loja];
+    const baseTicket = ticketMesAnteriorAteDiaPorLoja[r.loja];
+    if (baseFat    > 0) crescFatPorLoja[r.loja]    = ((r.fat    - baseFat)    / baseFat    * 100);
+    if (baseQty    > 0) crescQtyPorLoja[r.loja]    = ((r.qty    - baseQty)    / baseQty    * 100);
+    if (baseTicket > 0) crescTicketPorLoja[r.loja] = ((r.ticket - baseTicket) / baseTicket * 100);
   });
 
   // Média/dia e tendência por loja, calculados a partir da série diária por loja
@@ -2430,7 +2473,7 @@ async function renderMensalLeve() {
     Object.entries(dias).forEach(([data, valor]) => allRowsSimulado.push({ loja, data, valor }));
   });
 
-  makeLojasRows(byLoja, document.getElementById('mensalLojas'), allRowsSimulado, uteisMes, porTipo, uteisRestantes, metaPorLoja, crescFatPorLoja, fatMesAnteriorTotalPorLoja);
+  makeLojasRows(byLoja, document.getElementById('mensalLojas'), allRowsSimulado, uteisMes, porTipo, uteisRestantes, metaPorLoja, crescFatPorLoja, fatMesAnteriorTotalPorLoja, crescQtyPorLoja, crescTicketPorLoja, fatMesAnteriorAteDiaPorLoja);
 
   const lojasSort = comDados.map(r => r.loja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
   const colors = lojasSort.map(l => lojaColorMap[l] || '#4F7EFF');
@@ -4152,8 +4195,12 @@ async function buscarTotalProdutosPeriodo(dataInicio, dataFim, lojaNome, marca) 
 }
 
 // ── Resumo financeiro (vencido/a vencer/quitado) por loja ──────────────────
-async function buscarResumoFinanceiro(lojaNome) {
-  const rows = await callRpc('fn_resumo_financeiro', { p_loja_id: lojaIdPorNome(lojaNome) }, false);
+async function buscarResumoFinanceiro(lojaNome, de = null, ate = null) {
+  const rows = await callRpc('fn_resumo_financeiro', {
+    p_loja_id: lojaIdPorNome(lojaNome),
+    p_de: de || null,
+    p_ate: ate || null
+  }, false);
   return rows.map(r => ({
     loja: r.loja_nome, tipo: r.tipo, vencido: parseFloat(r.total_vencido),
     aVencer: parseFloat(r.total_a_vencer), quitado: parseFloat(r.total_quitado)
@@ -5750,10 +5797,8 @@ async function renderFinanceiroLeve() {
   const [pagar, receber, resumoFin] = await Promise.all([
     buscarListaFinanceiro('pagar',   { loja: pagarLojaFil,   de: dataIni, ate: dataFimEf, situacao: statusFil, fornecedor: fornFil, limite: 2000 }),
     buscarListaFinanceiro('receber', { loja: receberLojaFil, de: dataIni, ate: dataFimEf, situacao: statusFil, fornecedor: fornFil, limite: 2000 }),
-    // Resumo SEM filtro de período — sempre mostra o total real de vencido/a vencer
-    // independente do que estiver selecionado no filtro de período do detalhamento.
-    // Assim os cards "Por Empresa" e os totais de topo são sempre o quadro completo da empresa.
-    buscarResumoFinanceiro(pagarLojaFil || ''),
+    // Resumo usa o mesmo período do filtro — quando sem período, retorna o total completo
+    buscarResumoFinanceiro(pagarLojaFil || '', dataIni || null, dataFimEf || null),
   ]);
   console.log(`[perf] renderFinanceiroLeve fetch: ${Math.round(performance.now() - tF)}ms`);
 
