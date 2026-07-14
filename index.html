@@ -573,6 +573,15 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
           <div class="chart-wrap tall"><canvas id="chartDiarioHora"></canvas></div>
         </div>
       </div>
+
+      <div class="section-title" style="margin-top:24px">Detalhamento de vendas</div>
+      <div class="filter-bar" style="margin-bottom:12px;">
+        <span class="filter-label">Loja:</span>
+        <select class="date-input" id="detalheLojaFilter" onchange="renderDetalheVendas()" style="min-width:180px">
+          <option value="">Todas as lojas</option>
+        </select>
+      </div>
+      <div id="detalheVendasList"></div>
     </div>
 
     <!-- MENSAL -->
@@ -2098,6 +2107,14 @@ async function renderDiarioLeve() {
   const date = document.getElementById('dateFilter').value || new Date().toISOString().split('T')[0];
   const lojaFil = document.getElementById('diarioLojaFilter')?.value || '';
 
+  // Popula o filtro de loja do detalhamento de vendas (uma vez só)
+  const detalheLojaSelect = document.getElementById('detalheLojaFilter');
+  if (detalheLojaSelect && !detalheLojaSelect.dataset.populated) {
+    const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+    detalheLojaSelect.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+    detalheLojaSelect.dataset.populated = '1';
+  }
+
   const tD = performance.now();
   const [resumo, porHora, porTipo] = await Promise.all([
     buscarResumoFaturamento(date, date, lojaFil),
@@ -2167,6 +2184,119 @@ async function renderDiarioLeve() {
       plugins: { ...chartDefaults.plugins, legend: { display: true, position: 'top', labels: { color: '#9BA5C0', font: { family: 'Plus Jakarta Sans', size: 11 }, padding: 14, boxWidth: 12 } } },
       scales: { x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } } }
     }
+  });
+
+  renderDetalheVendas();
+}
+
+// ── Detalhamento de vendas — lista por venda com produtos e formas de pagamento ──
+// Fica logo abaixo dos gráficos na Visão Diária. Reusa a mesma data do
+// dateFilter e tem filtro de loja próprio (detalheLojaFilter).
+async function renderDetalheVendas() {
+  const listEl = document.getElementById('detalheVendasList');
+  if (!listEl) return;
+
+  const date = document.getElementById('dateFilter').value || new Date().toISOString().split('T')[0];
+  const lojaFil = document.getElementById('detalheLojaFilter')?.value || '';
+
+  listEl.innerHTML = '<div style="color:var(--text2);padding:12px 0;font-size:13px">Carregando...</div>';
+
+  const vendas = await buscarDetalheVendas(date, lojaFil);
+
+  if (!vendas.length) {
+    listEl.innerHTML = '<div class="empty"><div class="empty-icon">🧾</div>Nenhuma venda encontrada nesta data.</div>';
+    return;
+  }
+
+  listEl.innerHTML = '';
+
+  vendas.forEach(v => {
+    const card = document.createElement('div');
+    card.style.cssText = `
+      background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius-sm);
+      margin-bottom:10px; overflow:hidden;
+    `;
+
+    const header = document.createElement('div');
+    header.style.cssText = `
+      display:flex; align-items:center; justify-content:space-between;
+      padding:10px 16px; cursor:pointer; user-select:none; gap:12px;
+    `;
+    header.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
+        <span style="font-size:13px;font-weight:800;color:var(--text);white-space:nowrap">${v.nroVenda}</span>
+        <span style="font-size:12px;color:var(--text2);white-space:nowrap">${v.hora || '—'}</span>
+        <span style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${v.vendedor || 'N/A'}</span>
+        ${!lojaFil ? `<span style="font-size:11px;color:var(--text3);white-space:nowrap">· ${v.loja}</span>` : ''}
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:13px;font-weight:700;color:var(--text)">${fmt(v.valor)}</span>
+        <span class="detalhe-chevron" style="font-size:11px;color:var(--text3)">▼</span>
+      </div>`;
+    card.appendChild(header);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'display:none; padding:0 16px 12px 16px;';
+
+    if (v.produtos.length) {
+      const prodTitle = document.createElement('div');
+      prodTitle.style.cssText = 'font-size:11px;font-weight:700;color:var(--text2);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.03em';
+      prodTitle.textContent = 'Produtos';
+      body.appendChild(prodTitle);
+
+      v.produtos.forEach((p, i) => {
+        const row = document.createElement('div');
+        row.style.cssText = `
+          display:flex; align-items:center; justify-content:space-between; gap:10px;
+          padding:6px 0; ${i < v.produtos.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}
+        `;
+        row.innerHTML = `
+          <div style="font-size:12px;color:var(--text);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            ${p.produto || 'Sem descrição'} <span style="color:var(--text2)">× ${fmtNum(p.quantidade)}</span>
+          </div>
+          <div style="font-size:12px;color:var(--text2);flex-shrink:0">${fmt(p.valorUnit)} un.</div>
+          <div style="font-size:12px;font-weight:700;color:var(--text);flex-shrink:0;min-width:70px;text-align:right">${fmt(p.valorTotal)}</div>
+        `;
+        body.appendChild(row);
+      });
+    }
+
+    if (v.pagamentos.length) {
+      const pgTitle = document.createElement('div');
+      pgTitle.style.cssText = 'font-size:11px;font-weight:700;color:var(--text2);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.03em';
+      pgTitle.textContent = 'Formas de pagamento';
+      body.appendChild(pgTitle);
+
+      v.pagamentos.forEach((p, i) => {
+        const row = document.createElement('div');
+        row.style.cssText = `
+          display:flex; align-items:center; justify-content:space-between;
+          padding:5px 0; ${i < v.pagamentos.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}
+        `;
+        row.innerHTML = `
+          <div style="font-size:12px;color:var(--text)">${p.forma || '—'}</div>
+          <div style="font-size:12px;font-weight:700;color:var(--text)">${fmt(p.valor)}</div>
+        `;
+        body.appendChild(row);
+      });
+    }
+
+    if (!v.produtos.length && !v.pagamentos.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'font-size:12px;color:var(--text2);padding:8px 0';
+      empty.textContent = 'Sem detalhamento de itens/pagamento sincronizado ainda para esta venda.';
+      body.appendChild(empty);
+    }
+
+    card.appendChild(body);
+
+    header.addEventListener('click', () => {
+      const aberto = body.style.display !== 'none';
+      body.style.display = aberto ? 'none' : 'block';
+      header.querySelector('.detalhe-chevron').textContent = aberto ? '▼' : '▲';
+    });
+
+    listEl.appendChild(card);
   });
 }
 
@@ -4231,6 +4361,31 @@ async function buscarVendasPorHora(data, lojaNome) {
     p_data: data, p_loja_id: lojaIdPorNome(lojaNome)
   }, false);
   return rows.map(r => ({ hora: r.hora, loja: r.loja_nome, valor: parseFloat(r.faturamento) }));
+}
+
+// ── Detalhamento de vendas do dia — produtos e formas de pagamento ─────────
+// Usado pela seção "Detalhamento de vendas" da Visão Diária.
+async function buscarDetalheVendas(data, lojaNome) {
+  const rows = await callRpc('fn_detalhe_vendas_dia', {
+    p_data: data, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({
+    nroVenda: r.nro_venda,
+    loja: r.loja_nome,
+    hora: r.hora,
+    vendedor: r.vendedor,
+    valor: parseFloat(r.valor || 0),
+    produtos: (r.produtos || []).map(p => ({
+      produto: p.produto,
+      quantidade: parseFloat(p.quantidade || 0),
+      valorUnit: parseFloat(p.valor_unit || 0),
+      valorTotal: parseFloat(p.valor_total || 0)
+    })),
+    pagamentos: (r.pagamentos || []).map(p => ({
+      forma: p.forma_pgto,
+      valor: parseFloat(p.valor || 0)
+    }))
+  }));
 }
 
 // ── Vendas por hora agregado num período (Visão Mensal) ─────────────────────
