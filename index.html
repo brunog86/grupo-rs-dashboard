@@ -646,12 +646,12 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
       </div>
 
       <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center;">
-        <span class="filter-label">Período:</span>
-        <select class="date-input" id="prodMesAnoDE" style="min-width:160px" onchange="renderProdutosLeve()">
+        <span class="filter-label">Período (mês):</span>
+        <select class="date-input" id="prodMesAnoDE" style="min-width:160px" onchange="onProdMesChange()">
           <option value="">Início</option>
         </select>
         <span class="filter-sep">até</span>
-        <select class="date-input" id="prodMesAnoATE" style="min-width:160px" onchange="renderProdutosLeve()">
+        <select class="date-input" id="prodMesAnoATE" style="min-width:160px" onchange="onProdMesChange()">
           <option value="">Fim</option>
         </select>
         <button class="apply-btn" onclick="setProdMes()">Mês atual</button>
@@ -665,6 +665,22 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <select class="date-input" id="prodMarcaFilter" style="min-width:180px" onchange="renderProdutosMarcaLeve()">
           <option value="">Selecione uma marca...</option>
         </select>
+        <span class="filter-label" style="margin-left:8px;">Grupo:</span>
+        <select class="date-input" id="prodGrupoFilter" style="min-width:180px" onchange="renderProdutosLeve()">
+          <option value="">Todos os grupos</option>
+        </select>
+      </div>
+
+      <!-- Período específico por dia — alternativa ao filtro por mês acima -->
+      <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center;">
+        <span class="filter-label">Ou período específico:</span>
+        <span class="filter-label" style="font-weight:400;color:var(--text2)">Dia:</span>
+        <input type="date" class="date-input" id="prodDiaFilter" onchange="onProdDiaChange()">
+        <span class="filter-sep">ou de</span>
+        <input type="date" class="date-input" id="prodDataDE" onchange="onProdPeriodoChange()">
+        <span class="filter-sep">até</span>
+        <input type="date" class="date-input" id="prodDataATE" onchange="onProdPeriodoChange()">
+        <button class="apply-btn" onclick="limparPeriodoEspecificoProd()">✕ Limpar período específico</button>
       </div>
 
       <!-- Busca de produto -->
@@ -4243,13 +4259,13 @@ async function buscarRankingVendedores(dataInicio, dataFim, lojaNome, limite = 5
 }
 
 // ── Ranking de produtos ──────────────────────────────────────────────────────
-async function buscarRankingProdutos(dataInicio, dataFim, lojaNome, marca, limite = 200) {
+async function buscarRankingProdutos(dataInicio, dataFim, lojaNome, marca, limite = 200, grupo = null) {
   const rows = await callRpc('fn_ranking_produtos', {
     p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome),
-    p_marca: marca || null, p_limite: limite
+    p_marca: marca || null, p_grupo: grupo || null, p_limite: limite
   }, false);
   return rows.map(r => ({
-    produto: r.produto, marca: r.marca, barras: r.barras,
+    produto: r.produto, marca: r.marca, grupo: r.grupo, barras: r.barras,
     fat: parseFloat(r.faturamento), qty: parseFloat(r.quantidade), preco: parseFloat(r.preco_medio)
   }));
 }
@@ -4281,24 +4297,33 @@ async function buscarProdutoPorLoja(barras, produto, dataInicio, dataFim, lojaNo
   }));
 }
 
-async function buscarProdutosPorTexto(query, dataInicio, dataFim, lojaNome, marca, limite = 200) {
+async function buscarProdutosPorTexto(query, dataInicio, dataFim, lojaNome, marca, limite = 200, grupo = null) {
   const rows = await callRpc('fn_buscar_produtos', {
     p_query: query, p_data_inicio: dataInicio, p_data_fim: dataFim,
-    p_loja_id: lojaIdPorNome(lojaNome), p_marca: marca || null, p_limite: limite
+    p_loja_id: lojaIdPorNome(lojaNome), p_marca: marca || null, p_grupo: grupo || null, p_limite: limite
   }, false);
   return rows.map(r => ({
-    produto: r.produto, marca: r.marca, barras: r.barras,
+    produto: r.produto, marca: r.marca, grupo: r.grupo, barras: r.barras,
     fat: parseFloat(r.faturamento), qty: parseFloat(r.quantidade), preco: parseFloat(r.preco_medio),
     porLoja: (r.por_loja || []).map(pl => ({ loja: pl.loja, fat: parseFloat(pl.fat), qty: parseFloat(pl.qty) }))
   }));
 }
 
 // ── Ranking de marcas ────────────────────────────────────────────────────────
-async function buscarRankingMarcas(dataInicio, dataFim, lojaNome, limite = 100) {
+async function buscarRankingMarcas(dataInicio, dataFim, lojaNome, limite = 100, grupo = null) {
   const rows = await callRpc('fn_ranking_marcas', {
-    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome), p_limite: limite
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome),
+    p_grupo: grupo || null, p_limite: limite
   }, false);
   return rows.map(r => ({ marca: r.marca, fat: parseFloat(r.faturamento), qty: parseFloat(r.quantidade) }));
+}
+
+// ── Ranking de grupos — usado para popular o filtro "Grupo" ────────────────
+async function buscarRankingGrupos(dataInicio, dataFim, lojaNome, limite = 100) {
+  const rows = await callRpc('fn_ranking_grupos', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome), p_limite: limite
+  }, false);
+  return rows.map(r => ({ grupo: r.grupo, fat: parseFloat(r.faturamento), qty: parseFloat(r.quantidade) }));
 }
 
 // ── Total real de produtos vendidos em um período (sem limite de 500) ──────
@@ -4306,10 +4331,10 @@ async function buscarRankingMarcas(dataInicio, dataFim, lojaNome, limite = 100) 
 // (buscarRankingProdutos) continua limitado a 500/200 linhas para exibição,
 // mas o total exibido nos cards precisa ser o total real do período, não a
 // soma apenas dos itens que entraram no ranking.
-async function buscarTotalProdutosPeriodo(dataInicio, dataFim, lojaNome, marca) {
+async function buscarTotalProdutosPeriodo(dataInicio, dataFim, lojaNome, marca, grupo = null) {
   const rows = await callRpc('fn_total_produtos_periodo', {
     p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome),
-    p_marca: marca || null
+    p_marca: marca || null, p_grupo: grupo || null
   }, false);
   const r = rows[0];
   if (!r) return { fat: 0, qty: 0, distintos: 0 };
@@ -5074,6 +5099,7 @@ async function renderProdutosLeve() {
   const ateM   = document.getElementById('prodMesAnoATE').value;
   const lojaFil = document.getElementById('prodLojaFilter').value;
   const marcaFil = document.getElementById('prodMarcaFilter')?.value || null;
+  const grupoFil = document.getElementById('prodGrupoFilter')?.value || null;
 
   // Popula filtro de loja a partir do cadastro (sem precisar de prodData)
   const lojaSel = document.getElementById('prodLojaFilter');
@@ -5084,32 +5110,62 @@ async function renderProdutosLeve() {
     lojaSel.dataset.populated = '1';
   }
 
-  // Converte seletor de mês (YYYY-MM) em datas de início/fim
+  // Período específico por dia (prodDiaFilter / prodDataDE / prodDataATE) tem
+  // prioridade sobre o filtro por mês (prodMesAnoDE/ATE) quando preenchido —
+  // mesma lógica de mútua exclusão da aba Financeiro.
+  const diaEsp  = document.getElementById('prodDiaFilter')?.value || '';
+  const dataDE  = document.getElementById('prodDataDE')?.value || '';
+  const dataATE = document.getElementById('prodDataATE')?.value || '';
+
   let dataInicio = '2000-01-01', dataFim = '2099-12-31';
-  if (deM) dataInicio = `${deM}-01`;
-  if (ateM) {
-    const [y, m] = ateM.split('-').map(Number);
-    const ultimoDia = new Date(y, m, 0).getDate();
-    dataFim = `${ateM}-${String(ultimoDia).padStart(2,'0')}`;
+  if (diaEsp) {
+    dataInicio = diaEsp;
+    dataFim = diaEsp;
+  } else if (dataDE || dataATE) {
+    dataInicio = dataDE || '2000-01-01';
+    dataFim = dataATE || '2099-12-31';
+  } else {
+    // Converte seletor de mês (YYYY-MM) em datas de início/fim
+    if (deM) dataInicio = `${deM}-01`;
+    if (ateM) {
+      const [y, m] = ateM.split('-').map(Number);
+      const ultimoDia = new Date(y, m, 0).getDate();
+      dataFim = `${ateM}-${String(ultimoDia).padStart(2,'0')}`;
+    }
   }
 
   const noData  = document.getElementById('prodNoData');
   const content = document.getElementById('prodContent');
 
   const tP = performance.now();
-  const [produtos, marcas, totalReal] = await Promise.all([
-    buscarRankingProdutos(dataInicio, dataFim, lojaFil, marcaFil, 500),
-    buscarRankingMarcas(dataInicio, dataFim, lojaFil, 200),
-    buscarTotalProdutosPeriodo(dataInicio, dataFim, lojaFil, marcaFil),
+  const [produtos, marcas, totalReal, grupos] = await Promise.all([
+    buscarRankingProdutos(dataInicio, dataFim, lojaFil, marcaFil, 500, grupoFil),
+    buscarRankingMarcas(dataInicio, dataFim, lojaFil, 200, grupoFil),
+    buscarTotalProdutosPeriodo(dataInicio, dataFim, lojaFil, marcaFil, grupoFil),
+    buscarRankingGrupos(dataInicio, dataFim, lojaFil, 200),
   ]);
   console.log(`[perf] renderProdutosLeve fetch: ${Math.round(performance.now() - tP)}ms`);
+
+  // Popula o filtro de Grupo, preservando a seleção atual
+  const grupoSel = document.getElementById('prodGrupoFilter');
+  if (grupoSel) {
+    const currentGrupo = grupoSel.value;
+    const gruposOrdenados = grupos.map(g => g.grupo).sort((a,b) => {
+      // 'SEM GRUPO' sempre por último na lista
+      if (a === 'SEM GRUPO') return 1;
+      if (b === 'SEM GRUPO') return -1;
+      return a.localeCompare(b, 'pt-BR');
+    });
+    grupoSel.innerHTML = '<option value="">Todos os grupos</option>' +
+      gruposOrdenados.map(g => `<option value="${g}" ${g===currentGrupo?'selected':''}>${g}</option>`).join('');
+  }
 
   if (!produtos.length && !marcas.length) { noData.style.display = 'block'; content.style.display = 'none'; return; }
   noData.style.display = 'none';
   content.style.display = 'block';
 
   // Converte para o formato [name, {fat, qty, marca, barras}] usado pelo restante do código
-  lastSortedProd  = produtos.map(p => [p.produto, { fat: p.fat, qty: p.qty, marca: p.marca, barras: p.barras }]);
+  lastSortedProd  = produtos.map(p => [p.produto, { fat: p.fat, qty: p.qty, marca: p.marca, grupo: p.grupo, barras: p.barras }]);
   lastSortedMarca = marcas.map(m => [m.marca, { fat: m.fat, qty: m.qty }]);
   prodRankingExpanded  = false;
   marcaRankingExpanded = false;
@@ -5356,7 +5412,45 @@ function setProdAno() {
 function setProdTudo() {
   document.getElementById('prodMesAnoDE').value  = '';
   document.getElementById('prodMesAnoATE').value = '';
+  limparPeriodoEspecificoProd(false);
   renderProdutosLeve();
+}
+
+// ── Filtro de período específico por dia (alternativa ao filtro por mês) ────
+// Mesmo padrão de mútua exclusão usado na aba Financeiro (finDiaFilter /
+// finDeFilter / finAteFilter): selecionar um período específico por dia limpa
+// o filtro por mês, e vice-versa.
+function onProdMesChange() {
+  document.getElementById('prodDiaFilter').value = '';
+  document.getElementById('prodDataDE').value = '';
+  document.getElementById('prodDataATE').value = '';
+  renderProdutosLeve();
+}
+
+function onProdDiaChange() {
+  if (document.getElementById('prodDiaFilter').value) {
+    document.getElementById('prodMesAnoDE').value = '';
+    document.getElementById('prodMesAnoATE').value = '';
+    document.getElementById('prodDataDE').value = '';
+    document.getElementById('prodDataATE').value = '';
+  }
+  renderProdutosLeve();
+}
+
+function onProdPeriodoChange() {
+  if (document.getElementById('prodDataDE').value || document.getElementById('prodDataATE').value) {
+    document.getElementById('prodMesAnoDE').value = '';
+    document.getElementById('prodMesAnoATE').value = '';
+    document.getElementById('prodDiaFilter').value = '';
+  }
+  renderProdutosLeve();
+}
+
+function limparPeriodoEspecificoProd(rerender = true) {
+  document.getElementById('prodDiaFilter').value = '';
+  document.getElementById('prodDataDE').value = '';
+  document.getElementById('prodDataATE').value = '';
+  if (rerender) renderProdutosLeve();
 }
 
 async function exportFornecedorPDF() {
@@ -5663,24 +5757,38 @@ async function renderBuscaProdutoAsync() {
 
   status.textContent = 'Buscando...';
 
-  // Usa os mesmos filtros de período/loja/marca já selecionados na tela.
-  // Os seletores retornam "YYYY-MM" (ex: "2026-06") — precisa converter para
-  // datas completas ("YYYY-MM-01" e "YYYY-MM-último dia") antes de enviar
-  // ao banco, senão o Postgres não reconhece como date e retorna 0 resultados.
+  // Usa os mesmos filtros de período/loja/marca/grupo já selecionados na tela.
+  // Os seletores de mês retornam "YYYY-MM" (ex: "2026-06") — precisa converter
+  // para datas completas ("YYYY-MM-01" e "YYYY-MM-último dia") antes de
+  // enviar ao banco, senão o Postgres não reconhece como date. O período
+  // específico por dia (prodDiaFilter/prodDataDE/prodDataATE), quando
+  // preenchido, tem prioridade — mesma regra usada em renderProdutosLeve().
   const deM     = document.getElementById('prodMesAnoDE').value;
   const ateM    = document.getElementById('prodMesAnoATE').value;
+  const diaEsp  = document.getElementById('prodDiaFilter')?.value || '';
+  const dataDE  = document.getElementById('prodDataDE')?.value || '';
+  const dataATE = document.getElementById('prodDataATE')?.value || '';
   const lojaFil = document.getElementById('prodLojaFilter').value;
   const marcaFil= document.getElementById('prodMarcaFilter')?.value || '';
+  const grupoFil= document.getElementById('prodGrupoFilter')?.value || '';
 
   let dataInicio = '2000-01-01';
   let dataFim    = new Date().toISOString().split('T')[0];
-  if (deM) dataInicio = `${deM}-01`;
-  if (ateM) {
-    const [y, m] = ateM.split('-').map(Number);
-    dataFim = `${ateM}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
+  if (diaEsp) {
+    dataInicio = diaEsp;
+    dataFim = diaEsp;
+  } else if (dataDE || dataATE) {
+    dataInicio = dataDE || '2000-01-01';
+    dataFim = dataATE || new Date().toISOString().split('T')[0];
+  } else {
+    if (deM) dataInicio = `${deM}-01`;
+    if (ateM) {
+      const [y, m] = ateM.split('-').map(Number);
+      dataFim = `${ateM}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
+    }
   }
 
-  const resultados = await buscarProdutosPorTexto(query, dataInicio, dataFim, lojaFil, marcaFil, 200);
+  const resultados = await buscarProdutosPorTexto(query, dataInicio, dataFim, lojaFil, marcaFil, 200, grupoFil);
 
   // Confere se a busca ainda corresponde ao texto atual do campo (evita
   // mostrar resultado de uma busca antiga se o usuário já digitou outra coisa)
@@ -5699,7 +5807,7 @@ async function renderBuscaProdutoAsync() {
   const sorted = resultados.map(r => {
     const lojas = {};
     (r.porLoja || []).forEach(pl => { lojas[pl.loja] = { fat: pl.fat, qty: pl.qty }; });
-    return [r.produto, { fat: r.fat, qty: r.qty, marca: r.marca, barras: r.barras, lojas }];
+    return [r.produto, { fat: r.fat, qty: r.qty, marca: r.marca, grupo: r.grupo, barras: r.barras, lojas }];
   });
 
   status.textContent = `${sorted.length} produto(s) encontrado(s)`;
