@@ -5740,7 +5740,7 @@ function renderEstoqueTabela(produtos) {
     row.innerHTML = `
       <div style="min-width:0">
         <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.produto || 'Sem descrição'}</div>
-        <div style="font-size:11px;color:var(--text2);margin-top:2px">${p.marca}${p.grupo ? ' · ' + p.grupo : ''}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${p.marca}${p.grupo ? ' · ' + p.grupo : ''}${p.barras ? ' · ' + p.barras : ''}</div>
       </div>
       <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(p.entradaQtd)}</div>
       <div style="text-align:right;font-size:13px;color:var(--text)">${fmt(p.entradaValor)}</div>
