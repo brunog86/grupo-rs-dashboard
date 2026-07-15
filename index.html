@@ -536,6 +536,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
     <button class="tab" id="tabBtnFinexec" onclick="switchTab('finexec', this)">📊 Financeiro Executivo</button>
     <button class="tab" id="tabBtnVendedores" onclick="switchTab('vendedores', this)">🏆 Vendedores</button>
     <button class="tab" id="tabBtnProdutos" onclick="switchTab('produtos', this)">📦 Produtos & Marcas</button>
+    <button class="tab" id="tabBtnEstoque" onclick="switchTab('estoque', this)">📦 Estoque</button>
     <button class="tab" id="tabBtnFinanceiro" onclick="switchTab('financeiro', this)">💰 Financeiro</button>
     <button class="tab" id="tabBtnPagamentos" onclick="switchTab('pagamentos', this)">💳 Pagamentos</button>
     <button class="tab" id="tabBtnAnalise" onclick="switchTab('analise', this)">🔍 Análise</button>
@@ -807,6 +808,54 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         </div>
 
         <!-- Produtos por marca selecionada -->
+      </div>
+    </div>
+
+    <!-- ESTOQUE -->
+    <div class="tab-content" id="tab-estoque">
+      <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center;">
+        <span class="filter-label">Período (mês):</span>
+        <select class="date-input" id="estMesAnoDE" style="min-width:160px" onchange="onEstMesChange()">
+          <option value="">Início</option>
+        </select>
+        <span class="filter-sep">até</span>
+        <select class="date-input" id="estMesAnoATE" style="min-width:160px" onchange="onEstMesChange()">
+          <option value="">Fim</option>
+        </select>
+        <button class="apply-btn" onclick="setEstMes()">Mês atual</button>
+        <button class="apply-btn" onclick="setEstAno()">Ano atual</button>
+        <button class="apply-btn" onclick="setEstTudo()">Tudo</button>
+        <span class="filter-label" style="margin-left:8px;">Loja:</span>
+        <select class="date-input" id="estLojaFilter" style="min-width:160px" onchange="renderEstoqueLeve()">
+          <option value="">Todas as lojas</option>
+        </select>
+        <span class="filter-label" style="margin-left:8px;">Marca:</span>
+        <select class="date-input" id="estMarcaFilter" style="min-width:180px" onchange="renderEstoqueLeve()">
+          <option value="">Todas as marcas</option>
+        </select>
+        <span class="filter-label" style="margin-left:8px;">Grupo:</span>
+        <select class="date-input" id="estGrupoFilter" style="min-width:180px" onchange="renderEstoqueLeve()">
+          <option value="">Todos os grupos</option>
+        </select>
+      </div>
+
+      <!-- Período específico por dia — alternativa ao filtro por mês acima -->
+      <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center;">
+        <span class="filter-label">Ou período específico:</span>
+        <span class="filter-label" style="font-weight:400;color:var(--text2)">Dia:</span>
+        <input type="date" class="date-input" id="estDiaFilter" onchange="onEstDiaChange()">
+        <span class="filter-sep">ou de</span>
+        <input type="date" class="date-input" id="estDataDE" onchange="onEstPeriodoChange()">
+        <span class="filter-sep">até</span>
+        <input type="date" class="date-input" id="estDataATE" onchange="onEstPeriodoChange()">
+        <button class="apply-btn" onclick="limparPeriodoEspecificoEst()">✕ Limpar período específico</button>
+      </div>
+
+      <div class="metrics-grid" id="estMetrics"></div>
+
+      <div class="section-title" style="margin-top:20px">Entrada × Saída por produto</div>
+      <div class="ranking-card">
+        <div id="estTabelaList"></div>
       </div>
     </div>
 
@@ -1646,6 +1695,7 @@ const ABAS_CONTROLAVEIS = [
   { id: 'finexec',    nome: '📊 Financeiro Executivo',  idBtn: 'tabBtnFinexec' },
   { id: 'vendedores', nome: '🏆 Vendedores',            idBtn: 'tabBtnVendedores' },
   { id: 'produtos',   nome: '📦 Produtos & Marcas',     idBtn: 'tabBtnProdutos' },
+  { id: 'estoque',    nome: '📦 Estoque',               idBtn: 'tabBtnEstoque' },
   { id: 'financeiro', nome: '💰 Financeiro',            idBtn: 'tabBtnFinanceiro' },
   { id: 'pagamentos', nome: '💳 Pagamentos',            idBtn: 'tabBtnPagamentos' },
   { id: 'analise',    nome: '🔍 Análise',               idBtn: 'tabBtnAnalise' },
@@ -4326,6 +4376,37 @@ async function buscarRankingGrupos(dataInicio, dataFim, lojaNome, limite = 100) 
   return rows.map(r => ({ grupo: r.grupo, fat: parseFloat(r.faturamento), qty: parseFloat(r.quantidade) }));
 }
 
+// ── Entrada x Saída — resumo (cards da aba Estoque) ─────────────────────────
+async function buscarResumoEntradaSaida(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_resumo_entrada_saida', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  const r = rows[0];
+  if (!r) return { entradaValor: 0, entradaQtd: 0, saidaValor: 0, saidaQtd: 0 };
+  return {
+    entradaValor: parseFloat(r.entrada_valor) || 0,
+    entradaQtd:   parseFloat(r.entrada_qtd) || 0,
+    saidaValor:   parseFloat(r.saida_valor) || 0,
+    saidaQtd:     parseFloat(r.saida_qtd) || 0,
+  };
+}
+
+// ── Entrada x Saída — por produto (tabela da aba Estoque) ───────────────────
+async function buscarEntradaSaidaProduto(dataInicio, dataFim, lojaNome, marca, grupo, limite = 500) {
+  const rows = await callRpc('fn_entrada_saida_produto', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome),
+    p_marca: marca || null, p_grupo: grupo || null, p_limite: limite
+  }, false);
+  return rows.map(r => ({
+    produto: r.produto, marca: r.marca, grupo: r.grupo, barras: r.barras,
+    entradaQtd:   parseFloat(r.entrada_qtd) || 0,
+    entradaValor: parseFloat(r.entrada_valor) || 0,
+    saidaQtd:     parseFloat(r.saida_qtd) || 0,
+    saidaValor:   parseFloat(r.saida_valor) || 0,
+    saldoQtd:     parseFloat(r.saldo_qtd) || 0,
+  }));
+}
+
 // ── Total real de produtos vendidos em um período (sem limite de 500) ──────
 // Usado só para os cards de métrica de Produtos & Marcas — o ranking visual
 // (buscarRankingProdutos) continua limitado a 500/200 linhas para exibição,
@@ -5451,6 +5532,224 @@ function limparPeriodoEspecificoProd(rerender = true) {
   document.getElementById('prodDataDE').value = '';
   document.getElementById('prodDataATE').value = '';
   if (rerender) renderProdutosLeve();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ABA ESTOQUE — Entrada x Saída por produto
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function populateEstMesSelectoresLeve() {
+  // Reusa o mesmo cache de meses disponíveis já usado em Produtos & Marcas
+  // (baseado em produtos_vendidos — cobre o período de saída, que é o que
+  // define o intervalo relevante de qualquer forma).
+  if (!mesesDisponiveisProdutosCache.length) {
+    const mesesDisp = await callRpc('fn_meses_disponiveis_produtos', {}, false);
+    mesesDisponiveisProdutosCache = mesesDisp.map(r => r.mes).filter(Boolean).sort();
+  }
+  const mesesUnicos = [...new Set(mesesDisponiveisProdutosCache.map(m => m.substring(0,7)))].sort();
+  const mesLabel = ym => { const [y,m] = ym.split('-'); return new Date(+y,+m-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'}); };
+  const selDE  = document.getElementById('estMesAnoDE');
+  const selATE = document.getElementById('estMesAnoATE');
+  const opts = '<option value="">Selecione...</option>' + mesesUnicos.map(m => `<option value="${m}">${mesLabel(m)}</option>`).join('');
+  if (selDE && !selDE.dataset.populated)  { selDE.innerHTML  = opts; selDE.dataset.populated  = '1'; }
+  if (selATE && !selATE.dataset.populated) { selATE.innerHTML = opts; selATE.dataset.populated = '1'; }
+}
+
+function onEstMesChange() {
+  document.getElementById('estDiaFilter').value = '';
+  document.getElementById('estDataDE').value = '';
+  document.getElementById('estDataATE').value = '';
+  renderEstoqueLeve();
+}
+
+function onEstDiaChange() {
+  if (document.getElementById('estDiaFilter').value) {
+    document.getElementById('estMesAnoDE').value = '';
+    document.getElementById('estMesAnoATE').value = '';
+    document.getElementById('estDataDE').value = '';
+    document.getElementById('estDataATE').value = '';
+  }
+  renderEstoqueLeve();
+}
+
+function onEstPeriodoChange() {
+  if (document.getElementById('estDataDE').value || document.getElementById('estDataATE').value) {
+    document.getElementById('estMesAnoDE').value = '';
+    document.getElementById('estMesAnoATE').value = '';
+    document.getElementById('estDiaFilter').value = '';
+  }
+  renderEstoqueLeve();
+}
+
+function limparPeriodoEspecificoEst(rerender = true) {
+  document.getElementById('estDiaFilter').value = '';
+  document.getElementById('estDataDE').value = '';
+  document.getElementById('estDataATE').value = '';
+  if (rerender) renderEstoqueLeve();
+}
+
+function setEstMes() {
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const selDE  = document.getElementById('estMesAnoDE');
+  const selATE = document.getElementById('estMesAnoATE');
+  const opts = [...selDE.options].map(o => o.value).filter(Boolean);
+  const best = opts.find(o => o === ym) || opts[opts.length - 1] || '';
+  selDE.value  = best;
+  selATE.value = best;
+  limparPeriodoEspecificoEst(false);
+  renderEstoqueLeve();
+}
+
+function setEstAno() {
+  const now = new Date();
+  const ano = String(now.getFullYear());
+  const selDE  = document.getElementById('estMesAnoDE');
+  const selATE = document.getElementById('estMesAnoATE');
+  const opts = [...selDE.options].map(o => o.value).filter(Boolean);
+  const deste = opts.find(o => o.startsWith(ano)) || opts[0] || '';
+  const ate   = [...opts].reverse().find(o => o.startsWith(ano)) || opts[opts.length-1] || '';
+  selDE.value  = deste;
+  selATE.value = ate;
+  limparPeriodoEspecificoEst(false);
+  renderEstoqueLeve();
+}
+
+function setEstTudo() {
+  document.getElementById('estMesAnoDE').value  = '';
+  document.getElementById('estMesAnoATE').value = '';
+  limparPeriodoEspecificoEst(false);
+  renderEstoqueLeve();
+}
+
+async function renderEstoqueLeve() {
+  const lojaSel = document.getElementById('estLojaFilter');
+  if (lojaSel && !lojaSel.dataset.populated) {
+    const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+    lojaSel.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+    lojaSel.dataset.populated = '1';
+  }
+
+  const deM    = document.getElementById('estMesAnoDE').value;
+  const ateM   = document.getElementById('estMesAnoATE').value;
+  const diaEsp = document.getElementById('estDiaFilter')?.value || '';
+  const dataDE = document.getElementById('estDataDE')?.value || '';
+  const dataATE= document.getElementById('estDataATE')?.value || '';
+  const lojaFil  = document.getElementById('estLojaFilter').value;
+  const marcaFil = document.getElementById('estMarcaFilter')?.value || null;
+  const grupoFil = document.getElementById('estGrupoFilter')?.value || null;
+
+  let dataInicio, dataFim;
+  if (diaEsp) {
+    dataInicio = diaEsp; dataFim = diaEsp;
+  } else if (dataDE || dataATE) {
+    dataInicio = dataDE || '2000-01-01';
+    dataFim = dataATE || new Date().toISOString().split('T')[0];
+  } else if (deM || ateM) {
+    dataInicio = deM ? `${deM}-01` : '2000-01-01';
+    if (ateM) {
+      const [y, m] = ateM.split('-').map(Number);
+      dataFim = `${ateM}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
+    } else {
+      dataFim = '2099-12-31';
+    }
+  } else {
+    // Sem nenhum filtro de período selecionado — usa os últimos 30 dias por
+    // padrão, pra não processar o histórico inteiro sem necessidade.
+    const hoje = new Date();
+    const trintaAtras = new Date();
+    trintaAtras.setDate(hoje.getDate() - 30);
+    dataInicio = trintaAtras.toISOString().split('T')[0];
+    dataFim = hoje.toISOString().split('T')[0];
+  }
+
+  const [resumo, produtos, marcas, grupos] = await Promise.all([
+    buscarResumoEntradaSaida(dataInicio, dataFim, lojaFil),
+    buscarEntradaSaidaProduto(dataInicio, dataFim, lojaFil, marcaFil, grupoFil, 500),
+    buscarRankingMarcas(dataInicio, dataFim, lojaFil, 200, grupoFil),
+    buscarRankingGrupos(dataInicio, dataFim, lojaFil, 200),
+  ]);
+
+  const marcaSel = document.getElementById('estMarcaFilter');
+  if (marcaSel) {
+    const atualMarca = marcaSel.value;
+    marcaSel.innerHTML = '<option value="">Todas as marcas</option>' +
+      marcas.map(m => `<option value="${m.marca}" ${m.marca===atualMarca?'selected':''}>${m.marca}</option>`).join('');
+  }
+
+  const grupoSel = document.getElementById('estGrupoFilter');
+  if (grupoSel) {
+    const atualGrupo = grupoSel.value;
+    const gruposOrdenados = grupos.map(g => g.grupo).sort((a,b) => {
+      if (a === 'SEM GRUPO') return 1;
+      if (b === 'SEM GRUPO') return -1;
+      return a.localeCompare(b, 'pt-BR');
+    });
+    grupoSel.innerHTML = '<option value="">Todos os grupos</option>' +
+      gruposOrdenados.map(g => `<option value="${g}" ${g===atualGrupo?'selected':''}>${g}</option>`).join('');
+  }
+
+  makeMetrics(document.getElementById('estMetrics'), [
+    { label: 'Entrada (compras)', value: fmt(resumo.entradaValor) },
+    { label: 'Qtd. entrada', value: fmtNum(resumo.entradaQtd) },
+    { label: 'Saída (vendas)', value: fmt(resumo.saidaValor) },
+    { label: 'Qtd. saída', value: fmtNum(resumo.saidaQtd) },
+  ]);
+
+  renderEstoqueTabela(produtos);
+}
+
+function renderEstoqueTabela(produtos) {
+  const listEl = document.getElementById('estTabelaList');
+  if (!listEl) return;
+
+  if (!produtos.length) {
+    listEl.innerHTML = '<div class="empty"><div class="empty-icon">📦</div>Nenhuma entrada ou saída encontrada neste período.</div>';
+    return;
+  }
+
+  listEl.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.style.cssText = `
+    display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr; gap:10px;
+    padding:10px 14px; font-size:11px; font-weight:700; color:var(--text2);
+    text-transform:uppercase; letter-spacing:.03em; border-bottom:1px solid var(--border);
+  `;
+  header.innerHTML = `
+    <div>Produto</div>
+    <div style="text-align:right">Entrada (qtd)</div>
+    <div style="text-align:right">Entrada (R$)</div>
+    <div style="text-align:right">Saída (qtd)</div>
+    <div style="text-align:right">Saída (R$)</div>
+    <div style="text-align:right">Saldo (qtd)</div>
+  `;
+  listEl.appendChild(header);
+
+  produtos.forEach((p, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = `
+      display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr; gap:10px;
+      padding:9px 14px; align-items:center;
+      ${i < produtos.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}
+      transition:background 0.15s;
+    `;
+    row.onmouseenter = () => row.style.background = 'var(--bg4)';
+    row.onmouseleave = () => row.style.background = '';
+    const saldoCor = p.saldoQtd < 0 ? 'var(--red)' : 'var(--text)';
+    row.innerHTML = `
+      <div style="min-width:0">
+        <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.produto || 'Sem descrição'}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${p.marca}${p.grupo ? ' · ' + p.grupo : ''}</div>
+      </div>
+      <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(p.entradaQtd)}</div>
+      <div style="text-align:right;font-size:13px;color:var(--text)">${fmt(p.entradaValor)}</div>
+      <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(p.saidaQtd)}</div>
+      <div style="text-align:right;font-size:13px;color:var(--text)">${fmt(p.saidaValor)}</div>
+      <div style="text-align:right;font-size:13px;font-weight:700;color:${saldoCor}">${fmtNum(p.saldoQtd)}</div>
+    `;
+    listEl.appendChild(row);
+  });
 }
 
 async function exportFornecedorPDF() {
@@ -8151,6 +8450,7 @@ function switchTab(name, btn) {
   if (name === 'mensal')      renderMensalLeve();
   if (name === 'vendedores')  renderVendedoresLeve();
   if (name === 'produtos')    { populateProdMesSelectoresLeve(); renderProdutosLeve(); }
+  if (name === 'estoque')     { populateEstMesSelectoresLeve(); renderEstoqueLeve(); }
   if (name === 'financeiro')  { populateFinMesFilter(); renderFinanceiroLeve(); }
   if (name === 'pagamentos')  renderPagamentosLeve();
   if (name === 'analise')     renderAnaliseLeve();
