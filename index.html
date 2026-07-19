@@ -4945,16 +4945,8 @@ function buildRankingRows(container, sorted, maxVal, limit, showQtyLabel, sortBy
         // Agora busca via fn_produto_por_loja, obedecendo todos os filtros ativos.
         detalhe.innerHTML = '<div style="padding:10px 14px;color:var(--text2);font-size:13px">Carregando...</div>';
 
-        const deM     = document.getElementById('prodMesAnoDE')?.value;
-        const ateM    = document.getElementById('prodMesAnoATE')?.value;
         const lojaFil = document.getElementById('prodLojaFilter')?.value || '';
-        let dataInicio = '2000-01-01';
-        let dataFim    = new Date().toISOString().split('T')[0];
-        if (deM) dataInicio = `${deM}-01`;
-        if (ateM) {
-          const [y, m] = ateM.split('-').map(Number);
-          dataFim = `${ateM}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
-        }
+        const { dataInicio, dataFim } = getProdPeriodoAtivo();
 
         buscarProdutoPorLoja(barras, name, dataInicio, dataFim, lojaFil).then(lojas => {
           if (!lojas.length) {
@@ -4985,13 +4977,8 @@ function buildRankingRows(container, sorted, maxVal, limit, showQtyLabel, sortBy
       } else {
         // ── É UMA MARCA — comportamento condicional dependendo do filtro de loja ──
         // Lê os filtros ativos na aba Produtos & Marcas
-        const de      = document.getElementById('prodMesAnoDE')?.value;
-        const ate     = document.getElementById('prodMesAnoATE')?.value;
         const lojaFil = document.getElementById('prodLojaFilter')?.value || '';
-        const dataInicio = de  ? `${de}-01`  : '2000-01-01';
-        const [ateY, ateM] = ate ? ate.split('-').map(Number) : [new Date().getFullYear(), new Date().getMonth()+1];
-        const ultimoDia = new Date(ateY, ateM, 0).getDate();
-        const dataFim = ate ? `${ate}-${String(ultimoDia).padStart(2,'0')}` : new Date().toISOString().split('T')[0];
+        const { dataInicio, dataFim } = getProdPeriodoAtivo();
 
         if (!lojaFil) {
           // TODAS AS LOJAS → mostra detalhamento por loja daquela marca (via banco)
@@ -5108,15 +5095,8 @@ async function renderProdutosMarcaLeve() {
   const sec   = document.getElementById('prodPorMarcaSection');
   if (!marca) { sec.style.display = 'none'; return; }
 
-  const deM    = document.getElementById('prodMesAnoDE').value;
-  const ateM   = document.getElementById('prodMesAnoATE').value;
   const lojaFil = document.getElementById('prodLojaFilter').value;
-  let dataInicio = '2000-01-01', dataFim = '2099-12-31';
-  if (deM) dataInicio = `${deM}-01`;
-  if (ateM) {
-    const [y, m] = ateM.split('-').map(Number);
-    dataFim = `${ateM}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
-  }
+  const { dataInicio, dataFim } = getProdPeriodoAtivo();
 
   const [produtos, totalReal] = await Promise.all([
     buscarRankingProdutos(dataInicio, dataFim, lojaFil, marca, 500),
@@ -5174,10 +5154,37 @@ function renderProdutosMarca() {
   buildRankingRows(document.getElementById('prodPorMarcaList'), sorted, maxFat, 0, true);
 }
 
+// ── Helper central: calcula o período ativo (dia específico / range de
+// datas / range de mês) respeitando a mesma prioridade em todos os lugares
+// que fazem consulta na aba Produtos & Marcas — dia > período por data >
+// período por mês. Antes cada função recalculava isso por conta própria e
+// várias ficaram desatualizadas quando o filtro por dia foi adicionado.
+function getProdPeriodoAtivo() {
+  const diaEsp  = document.getElementById('prodDiaFilter')?.value || '';
+  const dataDE  = document.getElementById('prodDataDE')?.value || '';
+  const dataATE = document.getElementById('prodDataATE')?.value || '';
+  const deM     = document.getElementById('prodMesAnoDE')?.value || '';
+  const ateM    = document.getElementById('prodMesAnoATE')?.value || '';
+  let dataInicio = '2000-01-01', dataFim = '2099-12-31';
+  if (diaEsp) {
+    dataInicio = diaEsp;
+    dataFim = diaEsp;
+  } else if (dataDE || dataATE) {
+    dataInicio = dataDE || '2000-01-01';
+    dataFim = dataATE || '2099-12-31';
+  } else {
+    if (deM) dataInicio = `${deM}-01`;
+    if (ateM) {
+      const [y, m] = ateM.split('-').map(Number);
+      const ultimoDia = new Date(y, m, 0).getDate();
+      dataFim = `${ateM}-${String(ultimoDia).padStart(2,'0')}`;
+    }
+  }
+  return { dataInicio, dataFim };
+}
+
 // ── Versão leve de Produtos & Marcas — usa RPC em vez de prodData completo ─
 async function renderProdutosLeve() {
-  const deM    = document.getElementById('prodMesAnoDE').value;
-  const ateM   = document.getElementById('prodMesAnoATE').value;
   const lojaFil = document.getElementById('prodLojaFilter').value;
   const marcaFil = document.getElementById('prodMarcaFilter')?.value || null;
   const grupoFil = document.getElementById('prodGrupoFilter')?.value || null;
@@ -5194,26 +5201,7 @@ async function renderProdutosLeve() {
   // Período específico por dia (prodDiaFilter / prodDataDE / prodDataATE) tem
   // prioridade sobre o filtro por mês (prodMesAnoDE/ATE) quando preenchido —
   // mesma lógica de mútua exclusão da aba Financeiro.
-  const diaEsp  = document.getElementById('prodDiaFilter')?.value || '';
-  const dataDE  = document.getElementById('prodDataDE')?.value || '';
-  const dataATE = document.getElementById('prodDataATE')?.value || '';
-
-  let dataInicio = '2000-01-01', dataFim = '2099-12-31';
-  if (diaEsp) {
-    dataInicio = diaEsp;
-    dataFim = diaEsp;
-  } else if (dataDE || dataATE) {
-    dataInicio = dataDE || '2000-01-01';
-    dataFim = dataATE || '2099-12-31';
-  } else {
-    // Converte seletor de mês (YYYY-MM) em datas de início/fim
-    if (deM) dataInicio = `${deM}-01`;
-    if (ateM) {
-      const [y, m] = ateM.split('-').map(Number);
-      const ultimoDia = new Date(y, m, 0).getDate();
-      dataFim = `${ateM}-${String(ultimoDia).padStart(2,'0')}`;
-    }
-  }
+  const { dataInicio, dataFim } = getProdPeriodoAtivo();
 
   const noData  = document.getElementById('prodNoData');
   const content = document.getElementById('prodContent');
@@ -6062,30 +6050,10 @@ async function renderBuscaProdutoAsync() {
   // enviar ao banco, senão o Postgres não reconhece como date. O período
   // específico por dia (prodDiaFilter/prodDataDE/prodDataATE), quando
   // preenchido, tem prioridade — mesma regra usada em renderProdutosLeve().
-  const deM     = document.getElementById('prodMesAnoDE').value;
-  const ateM    = document.getElementById('prodMesAnoATE').value;
-  const diaEsp  = document.getElementById('prodDiaFilter')?.value || '';
-  const dataDE  = document.getElementById('prodDataDE')?.value || '';
-  const dataATE = document.getElementById('prodDataATE')?.value || '';
   const lojaFil = document.getElementById('prodLojaFilter').value;
   const marcaFil= document.getElementById('prodMarcaFilter')?.value || '';
   const grupoFil= document.getElementById('prodGrupoFilter')?.value || '';
-
-  let dataInicio = '2000-01-01';
-  let dataFim    = new Date().toISOString().split('T')[0];
-  if (diaEsp) {
-    dataInicio = diaEsp;
-    dataFim = diaEsp;
-  } else if (dataDE || dataATE) {
-    dataInicio = dataDE || '2000-01-01';
-    dataFim = dataATE || new Date().toISOString().split('T')[0];
-  } else {
-    if (deM) dataInicio = `${deM}-01`;
-    if (ateM) {
-      const [y, m] = ateM.split('-').map(Number);
-      dataFim = `${ateM}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
-    }
-  }
+  const { dataInicio, dataFim } = getProdPeriodoAtivo();
 
   const resultados = await buscarProdutosPorTexto(query, dataInicio, dataFim, lojaFil, marcaFil, 200, grupoFil);
 
