@@ -2723,7 +2723,7 @@ async function renderMensalLeve() {
     type: 'line',
     data: { labels: diasLabels,
       datasets: [{ data: diasSort.map(d => diasMap[d]), borderColor: '#2DD4A0', backgroundColor: 'rgba(45,212,160,0.07)', tension: 0.4, fill: true, pointBackgroundColor: '#2DD4A0', pointRadius: 3 }] },
-    options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } } } }
+    options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, beginAtZero: true, min: 0, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } } } }
   });
 
   // Faturamento por dia por loja — stacked columns
@@ -2864,7 +2864,7 @@ function renderMensal() {
     type: 'line',
     data: { labels: diasLabels,
       datasets: [{ data: diasSort.map(d => diasMap[d]), borderColor: '#2DD4A0', backgroundColor: 'rgba(45,212,160,0.07)', tension: 0.4, fill: true, pointBackgroundColor: '#2DD4A0', pointRadius: 3 }] },
-    options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } } } }
+    options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, beginAtZero: true, min: 0, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } } } }
   });
 
   // Faturamento por dia por loja — stacked columns
