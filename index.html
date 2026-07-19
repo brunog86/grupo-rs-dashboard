@@ -2264,6 +2264,7 @@ async function renderDiarioLeve() {
 // dateFilter e tem filtro de loja próprio (detalheLojaFilter).
 let detalheVendasCache = [];
 let detalheVendasOrdenacao = 'horario'; // 'horario' | 'valor'
+let detalheVendasLojaFil = '';
 
 async function renderDetalheVendas() {
   const listEl = document.getElementById('detalheVendasList');
@@ -2271,6 +2272,7 @@ async function renderDetalheVendas() {
 
   const date = document.getElementById('dateFilter').value || new Date().toISOString().split('T')[0];
   const lojaFil = document.getElementById('detalheLojaFilter')?.value || '';
+  detalheVendasLojaFil = lojaFil;
 
   listEl.innerHTML = '<div style="color:var(--text2);padding:12px 0;font-size:13px">Carregando...</div>';
 
@@ -2320,7 +2322,7 @@ function renderDetalheVendasList() {
         <span style="font-size:13px;font-weight:800;color:var(--text);white-space:nowrap">${v.nroVenda}</span>
         <span style="font-size:12px;color:var(--text2);white-space:nowrap">${v.hora || '—'}</span>
         <span style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${v.vendedor || 'N/A'}</span>
-        ${!lojaFil ? `<span style="font-size:11px;color:var(--text3);white-space:nowrap">· ${v.loja}</span>` : ''}
+        ${!detalheVendasLojaFil ? `<span style="font-size:11px;color:var(--text3);white-space:nowrap">· ${v.loja}</span>` : ''}
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
         <span style="font-size:13px;font-weight:700;color:var(--text)">${fmt(v.valor)}</span>
