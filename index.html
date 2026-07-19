@@ -146,6 +146,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
   cursor: pointer; font-family: 'Plus Jakarta Sans', sans-serif; transition: all 0.2s;
 }
 .apply-btn:hover { border-color: var(--orange); color: var(--orange); background: var(--orange3); }
+.apply-btn.active { border-color: var(--orange); color: var(--orange); background: var(--orange3); }
 
 /* METRICS GRID */
 .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 28px; }
@@ -581,6 +582,9 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <select class="date-input" id="detalheLojaFilter" onchange="renderDetalheVendas()" style="min-width:180px">
           <option value="">Todas as lojas</option>
         </select>
+        <span class="filter-label" style="margin-left:8px">Ordenar por:</span>
+        <button class="apply-btn active" id="detalheSortHora" onclick="setDetalheOrdenacao('horario')">🕐 Horário</button>
+        <button class="apply-btn" id="detalheSortValor" onclick="setDetalheOrdenacao('valor')">💰 Valor</button>
       </div>
       <div id="detalheVendasList"></div>
     </div>
@@ -2258,6 +2262,9 @@ async function renderDiarioLeve() {
 // ── Detalhamento de vendas — lista por venda com produtos e formas de pagamento ──
 // Fica logo abaixo dos gráficos na Visão Diária. Reusa a mesma data do
 // dateFilter e tem filtro de loja próprio (detalheLojaFilter).
+let detalheVendasCache = [];
+let detalheVendasOrdenacao = 'horario'; // 'horario' | 'valor'
+
 async function renderDetalheVendas() {
   const listEl = document.getElementById('detalheVendasList');
   if (!listEl) return;
@@ -2267,7 +2274,27 @@ async function renderDetalheVendas() {
 
   listEl.innerHTML = '<div style="color:var(--text2);padding:12px 0;font-size:13px">Carregando...</div>';
 
-  const vendas = await buscarDetalheVendas(date, lojaFil);
+  detalheVendasCache = await buscarDetalheVendas(date, lojaFil);
+  renderDetalheVendasList();
+}
+
+// Troca o critério de ordenação (chamado pelos botões) e re-renderiza a
+// lista já carregada em cache, sem precisar buscar de novo no servidor.
+function setDetalheOrdenacao(tipo) {
+  detalheVendasOrdenacao = tipo;
+  document.getElementById('detalheSortHora')?.classList.toggle('active', tipo === 'horario');
+  document.getElementById('detalheSortValor')?.classList.toggle('active', tipo === 'valor');
+  renderDetalheVendasList();
+}
+
+function renderDetalheVendasList() {
+  const listEl = document.getElementById('detalheVendasList');
+  if (!listEl) return;
+
+  const vendas = [...detalheVendasCache].sort((a, b) => {
+    if (detalheVendasOrdenacao === 'valor') return b.valor - a.valor;
+    return (a.hora || '').localeCompare(b.hora || '');
+  });
 
   if (!vendas.length) {
     listEl.innerHTML = '<div class="empty"><div class="empty-icon">🧾</div>Nenhuma venda encontrada nesta data.</div>';
