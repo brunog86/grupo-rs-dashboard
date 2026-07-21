@@ -755,6 +755,10 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
             <div class="chart-title">Participação por marca — qtd</div>
             <div class="chart-wrap"><canvas id="chartMarcaQty"></canvas></div>
           </div>
+          <div class="chart-card full">
+            <div class="chart-title">Faturamento por período</div>
+            <div class="chart-wrap tall"><canvas id="chartProdPeriodo"></canvas></div>
+          </div>
         </div>
 
         <!-- Rankings de produtos lado a lado -->
@@ -4349,6 +4353,17 @@ async function buscarRankingProdutos(dataInicio, dataFim, lojaNome, marca, limit
   }));
 }
 
+// ── Faturamento por período (dia ou mês), por loja — respeita loja/marca/
+// grupo/período da aba Produtos & Marcas. Usado no gráfico "Faturamento por
+// período". agrupamento: 'dia' ou 'mes'.
+async function buscarFaturamentoPeriodoProdutos(dataInicio, dataFim, lojaNome, marca, grupo, agrupamento = 'dia') {
+  const rows = await callRpc('fn_faturamento_periodo_produtos', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome),
+    p_marca: marca || null, p_grupo: grupo || null, p_agrupamento: agrupamento
+  }, false);
+  return rows.map(r => ({ periodo: r.periodo, loja: r.loja_nome, valor: parseFloat(r.faturamento) || 0 }));
+}
+
 // ── Busca de produtos por descrição ou código de barras ─────────────────────
 // ── Detalhamento de uma marca por loja (usado ao clicar na marca no ranking) ─
 async function buscarMarcaPorLoja(marca, dataInicio, dataFim, lojaNome) {
@@ -5121,6 +5136,7 @@ function toggleRankingMarca() {
 // ── Versão leve do painel de produtos por marca — usa RPC ──────────────────
 async function renderProdutosMarcaLeve() {
   const marca = document.getElementById('prodMarcaFilter').value;
+  renderProdPeriodoChart(); // marca também é filtro do gráfico "Faturamento por período"
   const sec   = document.getElementById('prodPorMarcaSection');
   if (!marca) { sec.style.display = 'none'; return; }
 
@@ -5210,6 +5226,16 @@ function getProdPeriodoAtivo() {
     }
   }
   return { dataInicio, dataFim };
+}
+
+// ── Mesma prioridade de mútua exclusão do getProdPeriodoAtivo(), mas retorna
+// qual unidade de agrupamento o gráfico "Faturamento por período" deve usar:
+// dia específico ou período por data => agrupa por dia; filtro mês a mês => agrupa por mês.
+function getProdAgrupamentoAtivo() {
+  const diaEsp  = document.getElementById('prodDiaFilter')?.value || '';
+  const dataDE  = document.getElementById('prodDataDE')?.value || '';
+  const dataATE = document.getElementById('prodDataATE')?.value || '';
+  return (diaEsp || dataDE || dataATE) ? 'dia' : 'mes';
 }
 
 // ── Versão leve de Produtos & Marcas — usa RPC em vez de prodData completo ─
@@ -5336,6 +5362,72 @@ async function renderProdutosLeve() {
   marcaSel.innerHTML = '<option value="">Selecione uma marca...</option>' + lastSortedMarca.map(([n]) => `<option value="${n}" ${n===currentMarca?'selected':''}>${n}</option>`).join('');
   if (currentMarca) renderProdutosMarcaLeve();
   else document.getElementById('prodPorMarcaSection').style.display = 'none';
+
+  renderProdPeriodoChart();
+}
+
+// ── Faturamento por período (aba Produtos & Marcas) — respeita loja/marca/
+// grupo/período ativos. Colunas por dia quando o período ativo é "dia
+// específico"/"período por data", ou por mês quando é o filtro "mês a mês"
+// (getProdAgrupamentoAtivo). Com mais de uma loja no resultado, uma coluna
+// por loja lado a lado em cada período, cor por loja (lojaColorMap, mesmo
+// padrão dos outros gráficos multi-loja do dashboard). Eixo Y sempre começa
+// em 0. Chamada tanto por renderProdutosLeve() (loja/grupo/período mudaram)
+// quanto por renderProdutosMarcaLeve() (marca mudou), para respeitar todos
+// os filtros da aba em tempo real.
+async function renderProdPeriodoChart() {
+  const canvas = document.getElementById('chartProdPeriodo');
+  if (!canvas) return;
+
+  const lojaFil  = document.getElementById('prodLojaFilter')?.value || '';
+  const marcaFil = document.getElementById('prodMarcaFilter')?.value || null;
+  const grupoFil = document.getElementById('prodGrupoFilter')?.value || null;
+  const { dataInicio, dataFim } = getProdPeriodoAtivo();
+  const agrupamento = getProdAgrupamentoAtivo();
+
+  const dados = await buscarFaturamentoPeriodoProdutos(dataInicio, dataFim, lojaFil, marcaFil, grupoFil, agrupamento);
+
+  destroyChart('prodPeriodo');
+
+  const periodosSort = [...new Set(dados.map(d => d.periodo))].sort();
+  const labels = periodosSort.map(p => {
+    if (agrupamento === 'mes') {
+      const [y, m] = p.split('-');
+      return `${m}/${y}`;
+    }
+    const [, m, d] = p.split('-');
+    return `${d}/${m}`;
+  });
+
+  const lojasNoDado = lojaFil ? [lojaFil] : [...new Set(dados.map(d => d.loja))].sort();
+  const porLojaPeriodo = {};
+  lojasNoDado.forEach(l => { porLojaPeriodo[l] = {}; periodosSort.forEach(p => porLojaPeriodo[l][p] = 0); });
+  dados.forEach(d => { if (porLojaPeriodo[d.loja]) porLojaPeriodo[d.loja][d.periodo] = (porLojaPeriodo[d.loja][d.periodo] || 0) + d.valor; });
+
+  const colors = lojasNoDado.map(l => lojaColorMap[l] || '#4F7EFF');
+
+  if (!periodosSort.length) return;
+
+  const ctx = canvas.getContext('2d');
+  charts['prodPeriodo'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: lojasNoDado.map((l, i) => ({
+        label: l,
+        data: periodosSort.map(p => porLojaPeriodo[l][p] || 0),
+        backgroundColor: colors[i], borderRadius: 4, borderSkipped: false
+      }))
+    },
+    options: {
+      ...chartDefaults,
+      plugins: { ...chartDefaults.plugins, legend: { display: lojasNoDado.length > 1, position: 'top', labels: { color: '#9BA5C0', font: { family: 'Plus Jakarta Sans', size: 11 }, padding: 14, boxWidth: 12 } } },
+      scales: {
+        x: { ...chartDefaults.scales.x },
+        y: { ...chartDefaults.scales.y, beginAtZero: true, min: 0, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } }
+      }
+    }
+  });
 }
 
 let mesesDisponiveisProdutosCache = [];
