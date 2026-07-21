@@ -5421,6 +5421,8 @@ async function renderProdPeriodoChart() {
     },
     options: {
       ...chartDefaults,
+      responsive: true,
+      maintainAspectRatio: false, // sem isso o Chart.js usa um aspect-ratio fixo e não preenche a largura toda do card
       plugins: { ...chartDefaults.plugins, legend: { display: lojasNoDado.length > 1, position: 'top', labels: { color: '#9BA5C0', font: { family: 'Plus Jakarta Sans', size: 11 }, padding: 14, boxWidth: 12 } } },
       scales: {
         x: { ...chartDefaults.scales.x },
