@@ -773,6 +773,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
                 <input type="number" id="pdfQtyProd" value="30" min="1" max="9999"
                   style="width:56px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;color:var(--text);font-size:12px;font-family:'Plus Jakarta Sans',sans-serif;text-align:center;outline:none;">
                 <button class="apply-btn" onclick="exportRankingPDF('produtos')" style="border-color:var(--orange);color:var(--orange);font-size:11px;padding:6px 10px">↓ PDF</button>
+                <button class="apply-btn" onclick="exportRankingExcel('produtos')" style="border-color:var(--green);color:var(--green);font-size:11px;padding:6px 10px">↓ Excel</button>
                 <button id="btnVerTodosProd" class="apply-btn" onclick="toggleRankingProd()" style="display:none;font-size:11px">Ver todos</button>
               </div>
             </div>
@@ -790,6 +791,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
                 <input type="number" id="pdfQtyProdQty" value="30" min="1" max="9999"
                   style="width:56px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;color:var(--text);font-size:12px;font-family:'Plus Jakarta Sans',sans-serif;text-align:center;outline:none;">
                 <button class="apply-btn" onclick="exportRankingPDF('produtosQty')" style="border-color:var(--orange);color:var(--orange);font-size:11px;padding:6px 10px">↓ PDF</button>
+                <button class="apply-btn" onclick="exportRankingExcel('produtosQty')" style="border-color:var(--green);color:var(--green);font-size:11px;padding:6px 10px">↓ Excel</button>
                 <button id="btnVerTodosProdQty" class="apply-btn" onclick="toggleRankingProdQty()" style="display:none;font-size:11px">Ver todos</button>
               </div>
             </div>
@@ -8345,6 +8347,65 @@ function renderPagamentos() {
       </div>`;
     grid.appendChild(card);
   });
+}
+
+// ── Exporta o ranking de produtos (por faturamento ou por quantidade) para
+// Excel — respeita o mesmo Top N do campo ao lado do botão de PDF e os
+// mesmos filtros de loja/marca/grupo/período já aplicados na tela (exporta
+// exatamente o ranking que está sendo exibido no momento).
+function exportRankingExcel(tipo) {
+  const qtyEl = tipo === 'produtosQty' ? document.getElementById('pdfQtyProdQty') : document.getElementById('pdfQtyProd');
+  const qty    = parseInt(qtyEl?.value || '30') || 30;
+  const sorted = tipo === 'produtosQty' ? [...lastSortedProd].sort((a,b) => b[1].qty - a[1].qty) : lastSortedProd;
+
+  if (!sorted || !sorted.length) { showToast('Nenhum dado para exportar.', 'error'); return; }
+
+  const items  = sorted.slice(0, qty);
+  const titulo = tipo === 'produtosQty' ? 'Ranking de Produtos — Por Quantidade' : 'Ranking de Produtos — Por Faturamento';
+
+  const lojaFil  = document.getElementById('prodLojaFilter')?.value || '';
+  const marcaFil = document.getElementById('prodMarcaFilter')?.value || '';
+  const grupoFil = document.getElementById('prodGrupoFilter')?.value || '';
+  const { dataInicio, dataFim } = getProdPeriodoAtivo();
+  const fmtData = d => d.split('-').reverse().join('/');
+  let subtitulo = lojaFil ? `Loja: ${lojaFil}` : 'Todas as lojas';
+  if (marcaFil) subtitulo += ` · Marca: ${marcaFil}`;
+  if (grupoFil) subtitulo += ` · Grupo: ${grupoFil}`;
+  subtitulo += ` · Período: ${fmtData(dataInicio)} até ${fmtData(dataFim)}`;
+
+  const linhas = [
+    [titulo],
+    [subtitulo],
+    [],
+    ['#', 'Produto', 'Marca', 'Grupo', 'Quantidade', 'Faturamento (R$)', 'Preço Médio (R$)']
+  ];
+
+  items.forEach(([name, d], i) => {
+    linhas.push([
+      i + 1,
+      name,
+      d.marca || 'SEM IDENTIF',
+      d.grupo || 'SEM GRUPO',
+      d.qty,
+      Number((d.fat || 0).toFixed(2)),
+      Number((d.qty > 0 ? d.fat / d.qty : 0).toFixed(2))
+    ]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(linhas);
+  ws['!cols'] = [{ wch: 5 }, { wch: 48 }, { wch: 20 }, { wch: 18 }, { wch: 12 }, { wch: 16 }, { wch: 16 }];
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, tipo === 'produtosQty' ? 'Por Quantidade' : 'Por Faturamento');
+
+  const hoje = new Date().toISOString().split('T')[0];
+  const nomeArquivo = `ranking-produtos-${tipo === 'produtosQty' ? 'quantidade' : 'faturamento'}-${hoje}.xlsx`;
+  XLSX.writeFile(wb, nomeArquivo);
+  showToast('Excel gerado!', '');
 }
 
 async function exportRankingPDF(tipo) {
