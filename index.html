@@ -2341,8 +2341,11 @@ function renderDetalheVendasList() {
 
     if (v.produtos.length) {
       const prodTitle = document.createElement('div');
-      prodTitle.style.cssText = 'font-size:11px;font-weight:700;color:var(--text2);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.03em';
-      prodTitle.textContent = 'Produtos';
+      prodTitle.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin:8px 0 4px;';
+      prodTitle.innerHTML = `
+        <span style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.03em">Produtos</span>
+        <span style="font-size:10px;color:var(--text3);white-space:nowrap">Bruto → c/ desconto</span>
+      `;
       body.appendChild(prodTitle);
 
       v.produtos.forEach((p, i) => {
@@ -2351,12 +2354,17 @@ function renderDetalheVendasList() {
           display:flex; align-items:center; justify-content:space-between; gap:10px;
           padding:6px 0; ${i < v.produtos.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}
         `;
+        // Quando há desconto/acréscimo, o valor bruto (qtd × preço de tabela)
+        // aparece riscado e o valor líquido (com desconto já aplicado) em
+        // negrito — a soma da coluna líquida é que bate com o total da venda.
+        const temDiferenca = Math.abs(p.valorLiquido - p.valorTotal) > 0.005;
         row.innerHTML = `
           <div style="font-size:12px;color:var(--text);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
             ${p.produto || 'Sem descrição'} <span style="color:var(--text2)">× ${fmtNum(p.quantidade)}</span>
           </div>
           <div style="font-size:12px;color:var(--text2);flex-shrink:0">${fmt(p.valorUnit)} un.</div>
-          <div style="font-size:12px;font-weight:700;color:var(--text);flex-shrink:0;min-width:70px;text-align:right">${fmt(p.valorTotal)}</div>
+          <div style="font-size:12px;color:var(--text3);flex-shrink:0;min-width:64px;text-align:right;${temDiferenca ? 'text-decoration:line-through' : ''}">${fmt(p.valorTotal)}</div>
+          <div style="font-size:12px;font-weight:700;color:${temDiferenca ? 'var(--green)' : 'var(--text)'};flex-shrink:0;min-width:70px;text-align:right">${fmt(p.valorLiquido)}</div>
         `;
         body.appendChild(row);
       });
@@ -4531,7 +4539,8 @@ async function buscarDetalheVendas(data, lojaNome) {
       produto: p.produto,
       quantidade: parseFloat(p.quantidade || 0),
       valorUnit: parseFloat(p.valor_unit || 0),
-      valorTotal: parseFloat(p.valor_total || 0)
+      valorTotal: parseFloat(p.valor_total || 0),
+      valorLiquido: parseFloat(p.valor_liquido ?? p.valor_total ?? 0)
     })),
     pagamentos: (r.pagamentos || []).map(p => ({
       forma: p.forma_pgto,
