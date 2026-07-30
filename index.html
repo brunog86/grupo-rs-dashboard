@@ -3434,6 +3434,7 @@ async function renderVendMensalChart() {
 
   const ctx = canvas.getContext('2d');
   charts['vendMensal'] = new Chart(ctx, {
+    type: 'bar',
     data: { labels, datasets: [...barDatasets, ...metaDatasets] },
     options: {
       ...chartDefaults,
