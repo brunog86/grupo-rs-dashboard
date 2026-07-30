@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dashboard · Grupo RS</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -3432,14 +3433,27 @@ async function renderVendMensalChart() {
     spanGaps: false, fill: false, order: 0, isMetaLine: true
   })) : [];
 
+  // Rótulo de valor em cima de cada coluna: se o gráfico está lotado (muitos
+  // meses × muitos vendedores, colunas finas), o rótulo horizontal de uma
+  // coluna invade a coluna vizinha. Nesses casos, gira o texto na diagonal
+  // em vez de sobrepor; se ainda assim a coluna for finíssima, esconde o
+  // rótulo (nesse ponto nem a diagonal resolve — só o tooltip ajuda).
+  const totalColunas = stacked ? mesesSort.length : mesesSort.length * vendedoresTop.length;
+  const larguraDisponivel = canvas.clientWidth || canvas.parentElement?.clientWidth || 800;
+  const larguraMediaColuna = larguraDisponivel / Math.max(totalColunas, 1);
+  const rotulosNaDiagonal = !stacked && larguraMediaColuna < 42;
+  const esconderRotulos = larguraMediaColuna < 16;
+
   const ctx = canvas.getContext('2d');
   charts['vendMensal'] = new Chart(ctx, {
     type: 'bar',
     data: { labels, datasets: [...barDatasets, ...metaDatasets] },
+    plugins: [ChartDataLabels],
     options: {
       ...chartDefaults,
       responsive: true,
       maintainAspectRatio: false,
+      layout: { padding: { top: rotulosNaDiagonal ? 26 : 20 } },
       onClick: (evt, elements) => {
         if (!elements.length) return;
         const el = elements[0];
@@ -3455,6 +3469,15 @@ async function renderVendMensalChart() {
             color: '#9BA5C0', font: { family: 'Plus Jakarta Sans', size: 11 }, padding: 14, boxWidth: 12,
             filter: item => !item.text.startsWith('Meta ')
           }
+        },
+        datalabels: {
+          display: (context) => !esconderRotulos && !context.dataset.isMetaLine && (context.dataset.data[context.dataIndex] || 0) > 0,
+          anchor: stacked ? 'center' : 'end',
+          align: stacked ? 'center' : (rotulosNaDiagonal ? 'end' : 'top'),
+          rotation: (!stacked && rotulosNaDiagonal) ? -60 : 0,
+          color: stacked ? '#FFFFFF' : '#6B7280',
+          font: { family: 'Plus Jakarta Sans', size: 10, weight: '600' },
+          formatter: v => fmtK(v)
         }
       },
       scales: {
