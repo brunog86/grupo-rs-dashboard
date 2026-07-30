@@ -882,6 +882,10 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         </select>
         <button class="apply-btn" onclick="renderVendedoresLeve()">Aplicar</button>
         <button class="apply-btn" onclick="setVendMesLeve()">Mês atual</button>
+        <span style="flex:1"></span>
+        <button class="apply-btn" onclick="document.getElementById('metasVendFileInput').click()" style="border-color:var(--amber);color:var(--amber)">🎯 Metas por Vendedor</button>
+        <input type="file" id="metasVendFileInput" accept=".xls,.xlsx,.csv" style="display:none">
+        <span id="metasVendFileStatus" style="font-size:12px;color:var(--text2)">Não carregado</span>
       </div>
 
       <div class="metrics-grid" id="vendMetrics"></div>
@@ -894,6 +898,28 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <div class="chart-card full">
           <div class="chart-title">Ticket médio por vendedor</div>
           <div class="chart-wrap tall"><canvas id="chartVendTicket"></canvas></div>
+        </div>
+        <div class="chart-card full">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div class="chart-title" style="margin:0">Faturamento mensal por vendedor</div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span style="font-size:11px;color:var(--text2);font-weight:600">Top:</span>
+              <input type="number" id="vendMensalTopN" value="8" min="1" max="30"
+                style="width:52px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;color:var(--text);font-size:12px;font-family:'Plus Jakarta Sans',sans-serif;text-align:center;outline:none;"
+                onchange="renderVendMensalChart()">
+              <button class="apply-btn active" id="btnVendMensalAgrupado" onclick="setVendMensalModo('agrupado')" style="font-size:11px;padding:6px 10px">Agrupado</button>
+              <button class="apply-btn" id="btnVendMensalEmpilhado" onclick="setVendMensalModo('empilhado')" style="font-size:11px;padding:6px 10px">Empilhado</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin:-4px 0 8px">Clique numa coluna pra ver o detalhamento diário do vendedor naquele mês · linha tracejada = meta (se carregada)</div>
+          <div class="chart-wrap tall"><canvas id="chartVendMensal"></canvas></div>
+          <div id="vendMensalDrilldown" style="display:none;margin-top:16px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:16px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <div style="font-size:13px;font-weight:700;color:var(--text)" id="vendMensalDrilldownTitulo"></div>
+              <button class="apply-btn" onclick="document.getElementById('vendMensalDrilldown').style.display='none'" style="font-size:11px;padding:5px 10px">✕ Fechar</button>
+            </div>
+            <div id="vendMensalDrilldownLista"></div>
+          </div>
         </div>
       </div>
 
@@ -2272,6 +2298,8 @@ let detalheVendasCache = [];
 let detalheVendasOrdenacao = 'horario'; // 'horario' | 'valor'
 let detalheVendasLojaFil = '';
 
+let vendMensalModo = 'agrupado'; // 'agrupado' | 'empilhado' — gráfico "Faturamento mensal por vendedor" 
+
 async function renderDetalheVendas() {
   const listEl = document.getElementById('detalheVendasList');
   if (!listEl) return;
@@ -3332,6 +3360,161 @@ async function renderVendedoresLeve() {
   });
 
   renderKart(sorted.map(([name, d]) => [name, { ...d, lojas: d.lojas }]));
+
+  renderVendMensalChart();
+}
+
+// ── Faturamento mensal por vendedor — colunas agrupadas (ou empilhadas) por
+// mês, uma cor por vendedor. Respeita o mesmo período/loja da aba (lê direto
+// dos campos de filtro, chamada por renderVendedoresLeve() toda vez que eles
+// mudam). Limita ao Top N vendedores do período (campo ao lado do título)
+// pra não virar um gráfico ilegível com dezenas de cores. Sobrepõe uma linha
+// tracejada de meta por vendedor (se houver meta carregada pro mês) e
+// permite clicar numa coluna pra abrir o detalhamento diário daquele
+// vendedor naquele mês.
+async function renderVendMensalChart() {
+  const canvas = document.getElementById('chartVendMensal');
+  if (!canvas) return;
+
+  const start   = document.getElementById('vendDateStart').value;
+  const end     = document.getElementById('vendDateEnd').value;
+  const lojaFil = document.getElementById('vendLojaFilter').value;
+  const topN    = parseInt(document.getElementById('vendMensalTopN')?.value || '8') || 8;
+
+  const drilldownEl = document.getElementById('vendMensalDrilldown');
+  if (drilldownEl) drilldownEl.style.display = 'none';
+
+  const [dados, metas] = await Promise.all([
+    buscarFaturamentoMensalVendedores(start, end, lojaFil),
+    buscarMetasVendedorPeriodo(start ? start.substring(0,7) + '-01' : null, end ? end.substring(0,7) + '-01' : null)
+  ]);
+
+  destroyChart('vendMensal');
+  if (!dados.length) return;
+
+  const mesesSort = [...new Set(dados.map(d => d.mes))].sort();
+  const labels = mesesSort.map(m => { const [y, mm] = m.split('-'); return `${mm}/${y}`; });
+
+  // Top N vendedores por faturamento total no período filtrado
+  const totalPorVendedor = {};
+  dados.forEach(d => { totalPorVendedor[d.vendedor] = (totalPorVendedor[d.vendedor] || 0) + d.valor; });
+  const vendedoresTop = Object.entries(totalPorVendedor)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topN)
+    .map(([nome]) => nome);
+
+  const porVendedorMes = {};
+  vendedoresTop.forEach(v => { porVendedorMes[v] = {}; mesesSort.forEach(m => porVendedorMes[v][m] = 0); });
+  dados.forEach(d => { if (porVendedorMes[d.vendedor]) porVendedorMes[d.vendedor][d.mes] = d.valor; });
+
+  const metaPorVendedorMes = {};
+  vendedoresTop.forEach(v => { metaPorVendedorMes[v] = {}; });
+  (metas || []).forEach(m => { if (metaPorVendedorMes[m.vendedor]) metaPorVendedorMes[m.vendedor][String(m.mes).substring(0,7)] = m.valor; });
+
+  const colors = vendedoresTop.map((_, i) => LOJA_COLORS[i % LOJA_COLORS.length]);
+  const stacked = vendMensalModo === 'empilhado';
+
+  const barDatasets = vendedoresTop.map((v, i) => ({
+    type: 'bar',
+    label: v,
+    data: mesesSort.map(m => porVendedorMes[v][m] || 0),
+    backgroundColor: colors[i], borderRadius: 4, borderSkipped: false,
+    stack: stacked ? 'vendas' : `bar${i}`,
+    vendedorRef: v
+  }));
+
+  const temMeta = vendedoresTop.some(v => Object.keys(metaPorVendedorMes[v]).length > 0);
+  const metaDatasets = temMeta ? vendedoresTop.map((v, i) => ({
+    type: 'line',
+    label: `Meta ${v}`,
+    data: mesesSort.map(m => (metaPorVendedorMes[v][m] !== undefined ? metaPorVendedorMes[v][m] : null)),
+    borderColor: colors[i], borderDash: [6, 4], borderWidth: 2, pointRadius: 0,
+    spanGaps: false, fill: false, order: 0, isMetaLine: true
+  })) : [];
+
+  const ctx = canvas.getContext('2d');
+  charts['vendMensal'] = new Chart(ctx, {
+    data: { labels, datasets: [...barDatasets, ...metaDatasets] },
+    options: {
+      ...chartDefaults,
+      responsive: true,
+      maintainAspectRatio: false,
+      onClick: (evt, elements) => {
+        if (!elements.length) return;
+        const el = elements[0];
+        const ds = charts['vendMensal'].data.datasets[el.datasetIndex];
+        if (!ds || ds.isMetaLine) return;
+        abrirDrilldownVendedor(ds.vendedorRef, mesesSort[el.index]);
+      },
+      plugins: {
+        ...chartDefaults.plugins,
+        legend: {
+          display: true, position: 'top',
+          labels: {
+            color: '#9BA5C0', font: { family: 'Plus Jakarta Sans', size: 11 }, padding: 14, boxWidth: 12,
+            filter: item => !item.text.startsWith('Meta ')
+          }
+        }
+      },
+      scales: {
+        x: { ...chartDefaults.scales.x, stacked },
+        y: { ...chartDefaults.scales.y, stacked, beginAtZero: true, min: 0, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } }
+      }
+    }
+  });
+}
+
+// Alterna entre colunas agrupadas (lado a lado) e empilhadas no gráfico
+// "Faturamento mensal por vendedor".
+function setVendMensalModo(modo) {
+  vendMensalModo = modo;
+  const btnA = document.getElementById('btnVendMensalAgrupado');
+  const btnE = document.getElementById('btnVendMensalEmpilhado');
+  if (btnA) btnA.classList.toggle('active', modo === 'agrupado');
+  if (btnE) btnE.classList.toggle('active', modo === 'empilhado');
+  renderVendMensalChart();
+}
+
+// Abre o painel de detalhamento diário abaixo do gráfico "Faturamento mensal
+// por vendedor" — chamado ao clicar numa coluna. Busca o faturamento dia a
+// dia do vendedor clicado, dentro do mês da coluna, respeitando o filtro de
+// loja atual da aba.
+async function abrirDrilldownVendedor(vendedor, mesStr) {
+  const painel = document.getElementById('vendMensalDrilldown');
+  const tituloEl = document.getElementById('vendMensalDrilldownTitulo');
+  const listaEl = document.getElementById('vendMensalDrilldownLista');
+  if (!painel || !tituloEl || !listaEl) return;
+
+  const lojaFil = document.getElementById('vendLojaFilter').value;
+  const [y, m] = mesStr.split('-').map(Number);
+  const dataInicioMes = `${mesStr}-01`;
+  const ultimoDia = new Date(y, m, 0).getDate();
+  const dataFimMes = `${mesStr}-${String(ultimoDia).padStart(2,'0')}`;
+
+  tituloEl.textContent = `${vendedor} — ${String(m).padStart(2,'0')}/${y}`;
+  listaEl.innerHTML = '<div style="color:var(--text3);font-size:12px">Carregando...</div>';
+  painel.style.display = 'block';
+  painel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  const dias = await buscarFaturamentoDiarioVendedor(vendedor, dataInicioMes, dataFimMes, lojaFil);
+  if (!dias.length) {
+    listaEl.innerHTML = '<div style="color:var(--text3);font-size:12px">Sem vendas nesse mês.</div>';
+    return;
+  }
+  const maxFat = Math.max(...dias.map(d => d.valor), 1);
+  listaEl.innerHTML = dias.map(d => {
+    const barW = Math.round((d.valor / maxFat) * 100);
+    const [, mm, dd] = String(d.dia).split('-');
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border2)">
+        <div style="width:44px;font-size:12px;color:var(--text2)">${dd}/${mm}</div>
+        <div style="flex:1;background:var(--bg2);border-radius:4px;overflow:hidden;height:8px">
+          <div style="width:${barW}%;height:100%;background:var(--amber)"></div>
+        </div>
+        <div style="min-width:110px;text-align:right;font-size:12px;font-weight:600">${fmt(d.valor)}</div>
+        <div style="min-width:70px;text-align:right;font-size:11px;color:var(--text3)">${d.qty} venda(s)</div>
+      </div>`;
+  }).join('');
 }
 
 function setVendMesLeve() {
@@ -4162,6 +4345,30 @@ async function syncMetasParaSupabase(rows) {
   }
 }
 
+// ── Envia metas por vendedor para o Supabase — mesmo padrão de "substitui
+// tudo" usado nas metas por loja (upload novo apaga as metas anteriores do
+// vendedor antes de inserir as novas). Sem loja_id: meta é do vendedor,
+// somada em todas as lojas onde ele vendeu (mesma lógica de agregação já
+// usada no ranking de vendedores). ─────────────────────────────────────────
+async function syncMetasVendedorParaSupabase(rows) {
+  if (!rows.length) return;
+  const vendedoresNovos = [...new Set(rows.map(r => r.vendedor))];
+
+  for (const vendedor of vendedoresNovos) {
+    await sb.from('metas_vendedor').delete().eq('vendedor', vendedor);
+
+    const rowsDoVendedor = rows.filter(r => r.vendedor === vendedor);
+    const payload = rowsDoVendedor.map(r => ({
+      vendedor, mes: `${r.mesAno}-01`, valor: r.valor
+    }));
+    for (let i = 0; i < payload.length; i += 500) {
+      const lote = payload.slice(i, i + 500);
+      const { error } = await sb.from('metas_vendedor').insert(lote);
+      if (error) console.error('Erro ao sincronizar metas de vendedor:', error);
+    }
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // BUSCA SOB DEMANDA (RPC) — substitui o carregamento de "tudo de uma vez"
 // As funções SQL fazem o cálculo pesado no banco; aqui só pedimos o resultado.
@@ -4349,6 +4556,33 @@ async function buscarRankingVendedores(dataInicio, dataFim, lojaNome, limite = 5
     vendedor: r.vendedor, loja: r.loja_nome, fat: parseFloat(r.faturamento),
     qty: parseInt(r.qtd_vendas), ticket: parseFloat(r.ticket_medio)
   }));
+}
+
+// ── Faturamento mensal por vendedor — respeita período/loja da aba Vendedores ─
+async function buscarFaturamentoMensalVendedores(dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_faturamento_mensal_vendedores', {
+    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({ mes: r.mes, vendedor: r.vendedor, valor: parseFloat(r.faturamento) || 0 }));
+}
+
+// ── Metas de faturamento por vendedor em um intervalo de meses (empresa
+// toda, sem filtro de loja — meta é do vendedor, não da loja) ──────────────
+async function buscarMetasVendedorPeriodo(mesInicio, mesFim) {
+  if (!mesInicio || !mesFim) return [];
+  const rows = await callRpc('fn_metas_vendedor_periodo', {
+    p_mes_inicio: mesInicio, p_mes_fim: mesFim
+  }, false);
+  return rows.map(r => ({ vendedor: r.vendedor, mes: r.mes, valor: parseFloat(r.valor) || 0 }));
+}
+
+// ── Faturamento diário de um vendedor num intervalo — usado no drill-down
+// ao clicar numa coluna do gráfico "Faturamento mensal por vendedor" ───────
+async function buscarFaturamentoDiarioVendedor(vendedor, dataInicio, dataFim, lojaNome) {
+  const rows = await callRpc('fn_faturamento_diario_vendedor', {
+    p_vendedor: vendedor, p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome)
+  }, false);
+  return rows.map(r => ({ dia: r.dia, valor: parseFloat(r.faturamento) || 0, qty: parseInt(r.qtd_vendas) || 0 }));
 }
 
 // ── Ranking de produtos ──────────────────────────────────────────────────────
@@ -4821,6 +5055,50 @@ function parseMetas(arrayBuffer) {
     }
     return rows;
   } catch(e) { console.error('parseMetas error:', e); return []; }
+}
+
+// Planilha de metas por vendedor: cabeçalho "METAS POR VENDEDOR | Fulano |
+// Ciclana | ...", linhas seguintes "data (1º dia do mês) | meta vendedor1 |
+// meta vendedor2 | ...". Igual à de metas por loja, mas usa o nome do
+// vendedor direto na coluna (sem mapeamento de sigla) — precisa bater
+// exatamente com o campo `vendedor` já usado no resto da aba.
+// Retorna [{ vendedor, mesAno, valor }].
+function parseMetasVendedor(arrayBuffer) {
+  try {
+    const wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    if (!aoa.length) return [];
+
+    const header = aoa[0];
+    const colunas = [];
+    for (let c = 1; c < header.length; c++) {
+      const nome = String(header[c] || '').trim();
+      if (!nome) continue;
+      colunas.push({ idx: c, vendedor: nome });
+    }
+
+    const rows = [];
+    for (let i = 1; i < aoa.length; i++) {
+      const row = aoa[i];
+      let dataCell = row[0];
+      let mesAno;
+      if (dataCell instanceof Date) {
+        mesAno = `${dataCell.getFullYear()}-${String(dataCell.getMonth()+1).padStart(2,'0')}`;
+      } else if (typeof dataCell === 'string' && dataCell.includes('-')) {
+        mesAno = dataCell.substring(0, 7);
+      } else {
+        continue; // linha sem data válida — ignora
+      }
+      colunas.forEach(({ idx, vendedor }) => {
+        const valor = parseFloat(row[idx]);
+        if (!isNaN(valor) && valor > 0) {
+          rows.push({ vendedor, mesAno, valor });
+        }
+      });
+    }
+    return rows;
+  } catch(e) { console.error('parseMetasVendedor error:', e); return []; }
 }
 
 function parseSheetProdutos(aoa, lojaName) {
@@ -8700,6 +8978,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (document.getElementById('tab-diario')?.classList.contains('active')) {
           await renderDiarioLeve();
+        }
+      } else {
+        showToast('Nenhuma meta encontrada. Verifique o arquivo.', 'error');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  });
+
+  document.getElementById('metasVendFileInput').addEventListener('change', e => {
+    if (!podeEscrever()) { showToast('Seu perfil não tem permissão para carregar arquivos.', 'error'); return; }
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async ev => {
+      const rows = parseMetasVendedor(ev.target.result);
+      if (rows.length > 0) {
+        const vendedores = [...new Set(rows.map(r => r.vendedor))];
+        document.getElementById('metasVendFileStatus').textContent = `✓ ${rows.length} metas no arquivo`;
+        document.getElementById('metasVendFileStatus').style.color = 'var(--green)';
+        showToast('Enviando para o servidor...', '');
+        await syncMetasVendedorParaSupabase(rows);
+        showToast(`Metas de vendedor carregadas — ${vendedores.length} vendedor(es) atualizado(s)`, 'success');
+        limparRpcCache(); // invalida cache de fn_metas_vendedor_periodo, força reconsulta
+        if (document.getElementById('tab-vendedores')?.classList.contains('active')) {
+          await renderVendMensalChart();
         }
       } else {
         showToast('Nenhuma meta encontrada. Verifique o arquivo.', 'error');
