@@ -3438,8 +3438,12 @@ async function renderVendMensalChart() {
   // coluna invade a coluna vizinha. Nesses casos, gira o texto na diagonal
   // em vez de sobrepor; se ainda assim a coluna for finíssima, esconde o
   // rótulo (nesse ponto nem a diagonal resolve — só o tooltip ajuda).
+  // Mede pelo contêiner (.chart-wrap), não pelo <canvas>: o destroyChart()
+  // logo acima reseta o tamanho renderizado do canvas, então lê-lo aqui
+  // sempre dava uma largura pequena e forçava rotação mesmo com colunas
+  // largas. O contêiner mantém seu tamanho de layout normalmente.
   const totalColunas = stacked ? mesesSort.length : mesesSort.length * vendedoresTop.length;
-  const larguraDisponivel = canvas.clientWidth || canvas.parentElement?.clientWidth || 800;
+  const larguraDisponivel = canvas.parentElement?.getBoundingClientRect().width || canvas.clientWidth || 800;
   const larguraMediaColuna = larguraDisponivel / Math.max(totalColunas, 1);
   const rotulosNaDiagonal = !stacked && larguraMediaColuna < 42;
   const esconderRotulos = larguraMediaColuna < 16;
@@ -3453,7 +3457,7 @@ async function renderVendMensalChart() {
       ...chartDefaults,
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { top: rotulosNaDiagonal ? 26 : 20 } },
+      layout: { padding: { top: rotulosNaDiagonal ? 46 : 20 } },
       onClick: (evt, elements) => {
         if (!elements.length) return;
         const el = elements[0];
