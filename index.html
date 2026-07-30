@@ -3433,20 +3433,25 @@ async function renderVendMensalChart() {
     spanGaps: false, fill: false, order: 0, isMetaLine: true
   })) : [];
 
-  // Rótulo de valor em cima de cada coluna: se o gráfico está lotado (muitos
-  // meses × muitos vendedores, colunas finas), o rótulo horizontal de uma
-  // coluna invade a coluna vizinha. Nesses casos, gira o texto na diagonal
-  // em vez de sobrepor; se ainda assim a coluna for finíssima, esconde o
-  // rótulo (nesse ponto nem a diagonal resolve — só o tooltip ajuda).
+  // Rótulo de valor em cima de cada coluna: só gira na diagonal quem
+  // realmente não cabe na horizontal, medindo pixel a pixel a largura do
+  // texto formatado ("R$ 91,5k") contra o espaço real daquela coluna —
+  // em vez de um limiar genérico aplicado a todas as colunas do gráfico.
   // Mede pelo contêiner (.chart-wrap), não pelo <canvas>: o destroyChart()
   // logo acima reseta o tamanho renderizado do canvas, então lê-lo aqui
-  // sempre dava uma largura pequena e forçava rotação mesmo com colunas
-  // largas. O contêiner mantém seu tamanho de layout normalmente.
-  const totalColunas = stacked ? mesesSort.length : mesesSort.length * vendedoresTop.length;
+  // sempre dava uma largura errada. O contêiner mantém seu tamanho normal.
   const larguraDisponivel = canvas.parentElement?.getBoundingClientRect().width || canvas.clientWidth || 800;
-  const larguraMediaColuna = larguraDisponivel / Math.max(totalColunas, 1);
-  const rotulosNaDiagonal = !stacked && larguraMediaColuna < 42;
-  const esconderRotulos = larguraMediaColuna < 16;
+  const larguraCategoria = larguraDisponivel / Math.max(mesesSort.length, 1);
+  const larguraSlot = stacked ? larguraCategoria : larguraCategoria / Math.max(vendedoresTop.length, 1);
+
+  const medCtx = canvas.getContext('2d');
+  medCtx.font = "600 10px 'Plus Jakarta Sans', sans-serif";
+  const larguraTexto = (txt) => medCtx.measureText(txt).width;
+  const precisaGirar = (valor) => !stacked && (larguraTexto(fmtK(valor)) + 8 > larguraSlot);
+
+  // Só reserva espaço extra no topo se pelo menos um rótulo do gráfico for
+  // girar — não faz sentido empurrar tudo pra baixo se ninguém precisar.
+  const existeRotuloDiagonal = !stacked && barDatasets.some(ds => ds.data.some(v => v > 0 && precisaGirar(v)));
 
   const ctx = canvas.getContext('2d');
   charts['vendMensal'] = new Chart(ctx, {
@@ -3457,7 +3462,7 @@ async function renderVendMensalChart() {
       ...chartDefaults,
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { top: rotulosNaDiagonal ? 46 : 20 } },
+      layout: { padding: { top: existeRotuloDiagonal ? 46 : 20 } },
       onClick: (evt, elements) => {
         if (!elements.length) return;
         const el = elements[0];
@@ -3475,10 +3480,10 @@ async function renderVendMensalChart() {
           }
         },
         datalabels: {
-          display: (context) => !esconderRotulos && !context.dataset.isMetaLine && (context.dataset.data[context.dataIndex] || 0) > 0,
+          display: (context) => !context.dataset.isMetaLine && (context.dataset.data[context.dataIndex] || 0) > 0,
           anchor: stacked ? 'center' : 'end',
-          align: stacked ? 'center' : (rotulosNaDiagonal ? 'end' : 'top'),
-          rotation: (!stacked && rotulosNaDiagonal) ? -60 : 0,
+          align: (context) => stacked ? 'center' : (precisaGirar(context.dataset.data[context.dataIndex] || 0) ? 'end' : 'top'),
+          rotation: (context) => precisaGirar(context.dataset.data[context.dataIndex] || 0) ? -60 : 0,
           color: stacked ? '#FFFFFF' : '#6B7280',
           font: { family: 'Plus Jakarta Sans', size: 10, weight: '600' },
           formatter: v => fmtK(v)
