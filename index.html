@@ -5565,7 +5565,16 @@ function getProdPeriodoAtivo() {
   const dataATE = document.getElementById('prodDataATE')?.value || '';
   const deM     = document.getElementById('prodMesAnoDE')?.value || '';
   const ateM    = document.getElementById('prodMesAnoATE')?.value || '';
-  let dataInicio = '2000-01-01', dataFim = '2099-12-31';
+  // Sem nenhum filtro selecionado, o padrão era 2000-01-01 a 2099-12-31 — uma
+  // varredura de "todo o histórico, para sempre" que fazia fn_ranking_produtos
+  // e fn_total_produtos_periodo demorarem vários segundos (às vezes estourando
+  // o timeout de 25s). Como padrão sensato, e coerente com o resto do painel
+  // (Diário abre em "hoje", Vendedores abre no mês atual), cai no mês atual.
+  const hoje = new Date();
+  const mesAtualDE  = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-01`;
+  const ultimoDiaMesAtual = new Date(hoje.getFullYear(), hoje.getMonth()+1, 0).getDate();
+  const mesAtualATE = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(ultimoDiaMesAtual).padStart(2,'0')}`;
+  let dataInicio = mesAtualDE, dataFim = mesAtualATE;
   if (diaEsp) {
     dataInicio = diaEsp;
     dataFim = diaEsp;
@@ -5616,6 +5625,17 @@ async function renderProdutosLeve() {
   const noData  = document.getElementById('prodNoData');
   const content = document.getElementById('prodContent');
 
+  // Mostra um estado de carregamento em vez de deixar a tela parada e vazia
+  // enquanto as 4 consultas rodam (a busca sem filtro específico pode levar
+  // alguns segundos) — sem isso parecia que a aba simplesmente não abria.
+  const noDataHtmlOriginal = noData.innerHTML;
+  noData.innerHTML = `
+    <div class="empty-icon">⏳</div>
+    <div style="font-size:15px;font-weight:500;margin-bottom:8px;color:var(--text)">Carregando produtos...</div>
+    <div style="font-size:13px;color:var(--text2)">Isso pode levar alguns segundos.</div>`;
+  noData.style.display = 'block';
+  content.style.display = 'none';
+
   const tP = performance.now();
   const [produtos, marcas, totalReal, grupos] = await Promise.all([
     buscarRankingProdutos(dataInicio, dataFim, lojaFil, marcaFil, 500, grupoFil),
@@ -5639,7 +5659,7 @@ async function renderProdutosLeve() {
       gruposOrdenados.map(g => `<option value="${g}" ${g===currentGrupo?'selected':''}>${g}</option>`).join('');
   }
 
-  if (!produtos.length && !marcas.length) { noData.style.display = 'block'; content.style.display = 'none'; return; }
+  if (!produtos.length && !marcas.length) { noData.innerHTML = noDataHtmlOriginal; noData.style.display = 'block'; content.style.display = 'none'; return; }
   noData.style.display = 'none';
   content.style.display = 'block';
 
@@ -5798,8 +5818,21 @@ async function populateProdMesSelectoresLeve() {
   const selDE  = document.getElementById('prodMesAnoDE');
   const selATE = document.getElementById('prodMesAnoATE');
   const opts = '<option value="">Selecione...</option>' + mesesUnicos.map(m => `<option value="${m}">${mesLabel(m)}</option>`).join('');
+  const primeiraPopulacao = !!(selDE && !selDE.dataset.populated);
   if (selDE && !selDE.dataset.populated)  { selDE.innerHTML  = opts; selDE.dataset.populated  = '1'; }
   if (selATE && !selATE.dataset.populated) { selATE.innerHTML = opts; selATE.dataset.populated = '1'; }
+
+  // Na primeira vez que a aba abre, pré-seleciona o mês atual (ou o mais
+  // recente disponível, se ainda não houver vendas sincronizadas do mês
+  // corrente) — sem isso os selects ficavam em "Selecione..." e a consulta
+  // caía no fallback de todo o histórico (ver getProdPeriodoAtivo).
+  if (primeiraPopulacao && mesesUnicos.length) {
+    const hoje = new Date();
+    const mesAtual = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}`;
+    const mesPadrao = mesesUnicos.includes(mesAtual) ? mesAtual : mesesUnicos[mesesUnicos.length - 1];
+    if (selDE)  selDE.value  = mesPadrao;
+    if (selATE) selATE.value = mesPadrao;
+  }
 }
 
 function renderProdutos() {
@@ -8954,7 +8987,7 @@ function switchTab(name, btn) {
   if (name === 'diario')      renderDiarioLeve();
   if (name === 'mensal')      renderMensalLeve();
   if (name === 'vendedores')  renderVendedoresLeve();
-  if (name === 'produtos')    { populateProdMesSelectoresLeve(); renderProdutosLeve(); }
+  if (name === 'produtos')    { populateProdMesSelectoresLeve().then(() => renderProdutosLeve()); }
   if (name === 'estoque')     { populateEstMesSelectoresLeve(); renderEstoqueLeve(); }
   if (name === 'financeiro')  { populateFinMesFilter(); renderFinanceiroLeve(); }
   if (name === 'pagamentos')  renderPagamentosLeve();
