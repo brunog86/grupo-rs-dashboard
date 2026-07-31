@@ -2081,7 +2081,7 @@ const chartDefaults = {
   }
 };
 
-function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisRestantes, metaPorLoja, crescFatPorLoja, fatMesAnteriorTotalPorLoja, crescQtyPorLoja, crescTicketPorLoja, fatMesAnteriorAteDiaPorLoja) {
+function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisRestantes, metaPorLoja, crescFatPorLoja, fatMesAnteriorTotalPorLoja, crescQtyPorLoja, crescTicketPorLoja, fatMesAnteriorAteDiaPorLoja, ymTendencia) {
   const lojas = Object.keys(byLoja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
   container.innerHTML = '';
   if (!lojas.length) { container.innerHTML = '<div class="empty"><div class="empty-icon">📭</div>Sem dados para este período</div>'; return; }
@@ -2121,9 +2121,19 @@ function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisResta
           <div class="loja-metric-value" style="color:var(--blue2)">${fmt(mediaLoja)}</div>
           ${crescMediaLoja !== null ? `<div style="font-size:11px;color:${crescMediaLoja>=0?'var(--green)':'var(--red)'};margin-top:2px;">${crescMediaLoja>=0?'▲':'▼'} ${Math.abs(crescMediaLoja).toFixed(1).replace('.',',')}% vs. mês ant.</div>` : ''}
         </div>`;
-        // Tendência = faturamento atual da loja + (média/dia da loja × dias úteis restantes no mês)
+        // Tendência = faturamento atual da loja + (média/dia da loja × dias úteis restantes no mês).
+        // Recalcula os dias restantes especificamente pra esta loja: se ELA já
+        // faturou hoje, hoje não entra de novo na projeção; se ainda não
+        // faturou hoje, hoje conta normalmente — mesma regra do card geral,
+        // mas aplicada por loja (uma loja pode já ter vendido hoje e outra não).
         if (uteisRestantes !== undefined && uteisRestantes !== null) {
-          const tendLoja = d.fat + mediaLoja * uteisRestantes;
+          let uteisRestantesLoja = uteisRestantes;
+          if (ymTendencia) {
+            const hojeObjLoja = new Date();
+            const hojeStrLoja = `${hojeObjLoja.getFullYear()}-${String(hojeObjLoja.getMonth()+1).padStart(2,'0')}-${String(hojeObjLoja.getDate()).padStart(2,'0')}`;
+            uteisRestantesLoja = diasUteisRestantesNoMes(ymTendencia, diasComFat.includes(hojeStrLoja));
+          }
+          const tendLoja = d.fat + mediaLoja * uteisRestantesLoja;
           // % de crescimento da tendência vs. faturamento TOTAL FECHADO do mês anterior
           let tendSub = '';
           const baseTend = fatMesAnteriorTotalPorLoja && fatMesAnteriorTotalPorLoja[l];
@@ -2576,13 +2586,19 @@ function diasUteisNoMes(ym) {
 }
 
 // Conta quantos dias úteis (não-domingo) ainda restam no mês "ym", a partir de
-// HOJE (inclusive) até o fim do mês. Se o mês já terminou (ym é mês passado),
-// retorna 0 — não há mais dias a projetar. Se "ym" é um mês futuro, retorna o
-// total de dias úteis do mês inteiro (nenhum dia ainda ocorreu).
+// HOJE até o fim do mês. Se o mês já terminou (ym é mês passado), retorna 0 —
+// não há mais dias a projetar. Se "ym" é um mês futuro, retorna o total de
+// dias úteis do mês inteiro (nenhum dia ainda ocorreu).
 // Usado para a Tendência: faturamento_atual + média/dia × dias_úteis_restantes
 // — em vez de média/dia × total_dias_úteis_do_mês, que conta os dias já
 // passados duas vezes (uma no "atual", outra na projeção).
-function diasUteisRestantesNoMes(ym) {
+//
+// hojeJaTemFaturamento: se hoje já tem alguma venda lançada, hoje NÃO entra
+// na contagem de "restantes" — ele já está representado no faturamento atual,
+// e contá-lo de novo aqui projetaria um dia inteiro de média por cima de um
+// dia que já foi (parcialmente) faturado, inflando a tendência. Se hoje ainda
+// não tem nenhuma venda lançada, ele entra normalmente (dia ainda "em aberto").
+function diasUteisRestantesNoMes(ym, hojeJaTemFaturamento = false) {
   if (!ym) return 0;
   const hoje = new Date();
   const [y, m] = ym.split('-').map(Number);
@@ -2592,7 +2608,12 @@ function diasUteisRestantesNoMes(ym) {
   if (mesEhPassado) return 0;
 
   const mesEhFuturo = (y > hoje.getFullYear()) || (y === hoje.getFullYear() && m > hoje.getMonth() + 1);
-  const diaInicial = mesEhFuturo ? 1 : hoje.getDate(); // mês atual: conta a partir de hoje (inclusive)
+  let diaInicial;
+  if (mesEhFuturo) {
+    diaInicial = 1;
+  } else {
+    diaInicial = hojeJaTemFaturamento ? hoje.getDate() + 1 : hoje.getDate();
+  }
 
   let restantes = 0;
   for (let d = diaInicial; d <= totalDias; d++) {
@@ -2705,7 +2726,12 @@ async function renderMensalLeve() {
   const mediaDiaria = diasComFat.length > 0 ? totalFat / diasComFat.length : 0;
 
   const uteisMes = diasUteisNoMes(activeMonth);
-  const uteisRestantes = diasUteisRestantesNoMes(activeMonth);
+  // Hoje já tem alguma venda lançada (no escopo do filtro atual)? Se sim, hoje
+  // não entra de novo na projeção de "dias restantes" — ver diasUteisRestantesNoMes.
+  const hojeObj = new Date();
+  const hojeStr = `${hojeObj.getFullYear()}-${String(hojeObj.getMonth()+1).padStart(2,'0')}-${String(hojeObj.getDate()).padStart(2,'0')}`;
+  const hojeJaFaturou = diasComFat.includes(hojeStr);
+  const uteisRestantes = diasUteisRestantesNoMes(activeMonth, hojeJaFaturou);
   // Tendência = o que já faturou + (média/dia projetada para os dias úteis que
   // ainda faltam no mês). Antes era média/dia × total de dias úteis do mês,
   // o que contava os dias já passados duas vezes (uma no faturamento atual,
@@ -2789,7 +2815,7 @@ async function renderMensalLeve() {
     Object.entries(dias).forEach(([data, valor]) => allRowsSimulado.push({ loja, data, valor }));
   });
 
-  makeLojasRows(byLoja, document.getElementById('mensalLojas'), allRowsSimulado, uteisMes, porTipo, uteisRestantes, metaPorLoja, crescFatPorLoja, fatMesAnteriorTotalPorLoja, crescQtyPorLoja, crescTicketPorLoja, fatMesAnteriorAteDiaPorLoja);
+  makeLojasRows(byLoja, document.getElementById('mensalLojas'), allRowsSimulado, uteisMes, porTipo, uteisRestantes, metaPorLoja, crescFatPorLoja, fatMesAnteriorTotalPorLoja, crescQtyPorLoja, crescTicketPorLoja, fatMesAnteriorAteDiaPorLoja, activeMonth);
 
   const lojasSort = comDados.map(r => r.loja).sort((a,b) => byLoja[b].fat - byLoja[a].fat);
   const colors = lojasSort.map(l => lojaColorMap[l] || '#4F7EFF');
