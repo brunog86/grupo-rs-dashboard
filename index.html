@@ -1080,9 +1080,15 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <!-- Relatório detalhado -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px;">
           <div>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-              <div class="section-title" style="margin:0;border-left-color:var(--red)">Detalhamento — Contas a Pagar</div>
-              <div style="display:flex;align-items:center;gap:12px;">
+            <div style="margin-bottom:14px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+                <div class="section-title" style="margin:0;border-left-color:var(--red)">Detalhamento — Contas a Pagar</div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button class="apply-btn" onclick="exportFinPDF('pagar')" style="font-size:11px;padding:5px 10px;border-color:var(--red);color:var(--red)">📄 PDF</button>
+                  <button class="apply-btn" onclick="exportFinExcel('pagar')" style="font-size:11px;padding:5px 10px;border-color:var(--green);color:var(--green)">📊 Excel</button>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap;">
                 <label class="fin-toggle-label" title="Ligar: todos os itens expandidos · Desligar: só datas, clique para expandir">
                   <input type="checkbox" id="finPagarExpandToggle" checked onchange="toggleFinExpandir('finPagarList', this.checked)">
                   <span class="fin-toggle-track"></span>
@@ -1094,9 +1100,15 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
             <div id="finPagarList"></div>
           </div>
           <div>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-              <div class="section-title" style="margin:0;border-left-color:var(--green)">Detalhamento — Contas a Receber</div>
-              <div style="display:flex;align-items:center;gap:12px;">
+            <div style="margin-bottom:14px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+                <div class="section-title" style="margin:0;border-left-color:var(--green)">Detalhamento — Contas a Receber</div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button class="apply-btn" onclick="exportFinPDF('receber')" style="font-size:11px;padding:5px 10px;border-color:var(--red);color:var(--red)">📄 PDF</button>
+                  <button class="apply-btn" onclick="exportFinExcel('receber')" style="font-size:11px;padding:5px 10px;border-color:var(--green);color:var(--green)">📊 Excel</button>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap;">
                 <label class="fin-toggle-label" title="Ligar: todos os itens expandidos · Desligar: só datas, clique para expandir">
                   <input type="checkbox" id="finReceberExpandToggle" checked onchange="toggleFinExpandir('finReceberList', this.checked)">
                   <span class="fin-toggle-track"></span>
@@ -5285,6 +5297,11 @@ let prodRankingExpanded = false;
 let marcaRankingExpanded = false;
 let lastSortedProd = [];
 let lastSortedMarca = [];
+// Guarda a última lista renderizada no Detalhamento (Contas a Pagar/Receber),
+// já filtrada por período/loja/status/fornecedor — usada pelos exports de
+// PDF e Excel, que devem refletir exatamente o que está na tela no momento.
+let finPagarListAtual = [];
+let finReceberListAtual = [];
 
 function getFilteredProdRows() {
   const de     = document.getElementById('prodMesAnoDE').value;
@@ -6930,6 +6947,8 @@ async function renderFinanceiroLeve() {
 
   // Detalhamento: usa os dados filtrados pelo período selecionado
   const hoje = new Date().toISOString().split('T')[0];
+  finPagarListAtual = pagar;
+  finReceberListAtual = receber;
   buildFinListGeneric(pagar,   'finPagarList',   'var(--amber)', hoje);
   buildFinListGeneric(receber, 'finReceberList', 'var(--green)', hoje);
 
@@ -7191,6 +7210,199 @@ function buildFinListGeneric(data, listId, corAberto, hoje) {
   });
 }
 
+// ── Exports do Detalhamento (Contas a Pagar / Contas a Receber) ────────────
+// Ambos usam finPagarListAtual/finReceberListAtual — a última lista que
+// renderFinanceiroLeve() buscou, já filtrada por período/loja/status/
+// fornecedor — pra refletir exatamente o que está na tela no momento.
+
+// Situação de um lançamento (Vencido / Em aberto / Quitado), igual à lógica
+// já usada em buildFinListGeneric().
+function finSituacaoLabel(r, hoje) {
+  const dateKey  = r.dtVenc || r.emissao || '0000-00-00';
+  const isAberto = r.situacao === 'ABERTO';
+  const vencido  = isAberto && dateKey < hoje && dateKey !== '0000-00-00';
+  return vencido ? 'Vencido' : isAberto ? 'Em aberto' : 'Quitado';
+}
+
+// Descrição dos filtros ativos no momento, pro cabeçalho dos exports.
+function finSubtituloFiltros(tipo) {
+  const lojaFil    = document.getElementById(tipo === 'pagar' ? 'finPagarLojaFilter' : 'finReceberLojaFilter').value;
+  const mesFil     = document.getElementById('finMesFilter').value;
+  const diaFil     = document.getElementById('finDiaFilter').value;
+  const deFil      = document.getElementById('finDeFilter').value;
+  const ateFil     = document.getElementById('finAteFilter').value;
+  const statusFil  = document.getElementById('finStatusFilter').value;
+  const fornFil    = document.getElementById('finFornecedorFilter').value.trim();
+  const fmtData    = d => d.split('-').reverse().join('/');
+  const statusRot  = { VENCIDO: 'Vencido', A_VENCER: 'A vencer', ABERTO: 'Em aberto (todos)', QUITADO: 'Quitado / Recebido' };
+
+  const partes = [lojaFil ? `Loja: ${lojaFil}` : 'Todas as lojas'];
+  if (diaFil) partes.push(`Data: ${fmtData(diaFil)}`);
+  else if (mesFil) { const [y, m] = mesFil.split('-'); partes.push(`Mês: ${m}/${y}`); }
+  else if (deFil || ateFil) partes.push(`Período: ${deFil ? fmtData(deFil) : '...'} até ${ateFil ? fmtData(ateFil) : '...'}`);
+  if (statusFil) partes.push(`Status: ${statusRot[statusFil] || statusFil}`);
+  if (fornFil) partes.push(`Busca: "${fornFil}"`);
+  return partes.join(' · ');
+}
+
+function exportFinExcel(tipo) {
+  const dados = tipo === 'pagar' ? finPagarListAtual : finReceberListAtual;
+  if (!dados || !dados.length) { showToast('Nenhum lançamento para exportar.', 'error'); return; }
+
+  const hoje = new Date().toISOString().split('T')[0];
+  const titulo = tipo === 'pagar' ? 'Detalhamento — Contas a Pagar' : 'Detalhamento — Contas a Receber';
+  const subtitulo = finSubtituloFiltros(tipo);
+  const fmtData = d => d ? d.split('-').reverse().join('/') : '—';
+
+  const ordenados = [...dados].sort((a, b) => (a.dtVenc || a.emissao || '') .localeCompare(b.dtVenc || b.emissao || ''));
+
+  const linhas = [
+    [titulo],
+    [subtitulo],
+    [],
+    ['Vencimento', 'Fornecedor/Histórico', 'Categoria', 'Loja', 'Situação', 'Valor (R$)']
+  ];
+  ordenados.forEach(r => {
+    linhas.push([
+      fmtData(r.dtVenc || r.emissao),
+      r.fornecedor || r.historico || '—',
+      r.categoria || '',
+      r.loja || '',
+      finSituacaoLabel(r, hoje),
+      Number((r.valorDoc || 0).toFixed(2))
+    ]);
+  });
+  const totalGeral = ordenados.reduce((s, r) => s + (r.valorDoc || 0), 0);
+  linhas.push([]);
+  linhas.push(['', '', '', '', 'Total', Number(totalGeral.toFixed(2))]);
+
+  const ws = XLSX.utils.aoa_to_sheet(linhas);
+  ws['!cols'] = [{ wch: 12 }, { wch: 36 }, { wch: 22 }, { wch: 18 }, { wch: 12 }, { wch: 16 }];
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } }
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, tipo === 'pagar' ? 'Contas a Pagar' : 'Contas a Receber');
+  XLSX.writeFile(wb, `financeiro-${tipo}-${hoje}.xlsx`);
+  showToast('Excel gerado!', '');
+}
+
+async function exportFinPDF(tipo) {
+  const dados = tipo === 'pagar' ? finPagarListAtual : finReceberListAtual;
+  if (!dados || !dados.length) { showToast('Nenhum lançamento para exportar.', 'error'); return; }
+  showToast('Gerando PDF...', '');
+
+  const { jsPDF } = window.jspdf;
+  const hoje    = new Date().toISOString().split('T')[0];
+  const hojeBR  = new Date().toLocaleDateString('pt-BR', { dateStyle: 'long' });
+  const titulo  = tipo === 'pagar' ? 'Detalhamento — Contas a Pagar' : 'Detalhamento — Contas a Receber';
+  const subtitulo = finSubtituloFiltros(tipo);
+  const corTema = tipo === 'pagar' ? [220, 38, 38] : [5, 150, 105]; // var(--red) / var(--green)
+  const fmtData = d => d ? d.split('-').reverse().join('/') : '—';
+
+  const ordenados = [...dados].sort((a, b) => (a.dtVenc || a.emissao || '').localeCompare(b.dtVenc || b.emissao || ''));
+  const totalGeral = ordenados.reduce((s, r) => s + (r.valorDoc || 0), 0);
+
+  const pdf     = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageW   = pdf.internal.pageSize.getWidth();
+  const pageH   = pdf.internal.pageSize.getHeight();
+  const margin  = 14;
+  const usableW = pageW - margin * 2;
+
+  const drawHeader = () => {
+    pdf.setFillColor(28, 32, 48);
+    pdf.rect(0, 0, pageW, 22, 'F');
+    pdf.setFillColor(...corTema);
+    pdf.rect(0, 22, pageW, 1.2, 'F');
+
+    pdf.setFontSize(13); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(244, 246, 255);
+    pdf.text('Grupo RS', margin, 14);
+    pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(155, 165, 192);
+    pdf.text(hojeBR, pageW - margin, 14, { align: 'right' });
+
+    pdf.setFontSize(18); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
+    pdf.text(titulo, margin, 34);
+    pdf.setFontSize(10); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(90, 100, 128);
+    pdf.text(subtitulo, margin, 41);
+
+    const hy = 50;
+    pdf.setFillColor(247, 248, 252);
+    pdf.rect(margin, hy - 5, usableW, 8, 'F');
+    pdf.setFontSize(8); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(107, 117, 148);
+    pdf.text('VENCIMENTO',  margin + 2, hy);
+    pdf.text('FORNECEDOR / HISTÓRICO', margin + 32, hy);
+    pdf.text('SITUAÇÃO', pageW - margin - 40, hy, { align: 'right' });
+    pdf.text('VALOR (R$)', pageW - margin, hy, { align: 'right' });
+  };
+
+  const drawFooter = (pageNum, totalPages) => {
+    pdf.setFontSize(8); pdf.setTextColor(107, 117, 148); pdf.setFont('helvetica', 'normal');
+    pdf.text(`Página ${pageNum} de ${totalPages} · Gerado pelo Dashboard Grupo RS`, pageW / 2, pageH - 6, { align: 'center' });
+  };
+
+  const rowH   = 12;
+  const startY = 56;
+  let y        = startY;
+  let pageNum  = 1;
+
+  drawHeader();
+
+  ordenados.forEach((r, i) => {
+    if (y + rowH > pageH - 16) {
+      drawFooter(pageNum, '?');
+      pdf.addPage();
+      pageNum++;
+      drawHeader();
+      y = startY;
+    }
+
+    if (i % 2 === 0) {
+      pdf.setFillColor(247, 248, 252);
+      pdf.rect(margin, y - 6, usableW, rowH - 2, 'F');
+    }
+
+    const label   = finSituacaoLabel(r, hoje);
+    const corLbl  = label === 'Vencido' ? [220, 38, 38] : label === 'Em aberto' ? corTema : [90, 100, 128];
+
+    pdf.setFontSize(8); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
+    pdf.text(fmtData(r.dtVenc || r.emissao), margin + 2, y);
+
+    const nome = (r.fornecedor || r.historico || '—');
+    const nomeShort = nome.length > 44 ? nome.substring(0, 43) + '…' : nome;
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(nomeShort, margin + 32, y);
+    if (r.categoria || r.loja) {
+      pdf.setFontSize(7); pdf.setTextColor(107, 117, 148);
+      const linha2 = [r.categoria, r.loja].filter(Boolean).join(' · ');
+      pdf.text(linha2.length > 60 ? linha2.substring(0, 59) + '…' : linha2, margin + 32, y + 4);
+    }
+
+    pdf.setFontSize(7.5); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...corLbl);
+    pdf.text(label, pageW - margin - 40, y, { align: 'right' });
+
+    pdf.setFontSize(8.5); pdf.setTextColor(15, 21, 35);
+    pdf.text(fmt(r.valorDoc), pageW - margin, y, { align: 'right' });
+
+    y += rowH;
+  });
+
+  // Total geral
+  if (y + 12 > pageH - 16) { drawFooter(pageNum, '?'); pdf.addPage(); pageNum++; drawHeader(); y = startY; }
+  y += 2;
+  pdf.setDrawColor(228, 233, 242);
+  pdf.line(margin, y - 4, pageW - margin, y - 4);
+  pdf.setFontSize(10); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
+  pdf.text('Total', margin + 2, y + 2);
+  pdf.text(fmt(totalGeral), pageW - margin, y + 2, { align: 'right' });
+
+  const totalPages = pdf.internal.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) { pdf.setPage(p); drawFooter(p, totalPages); }
+
+  pdf.save(`financeiro-${tipo}-${hoje}.pdf`);
+  showToast('PDF gerado!', '');
+}
 
 function renderFinanceiro() {
   const hasPagar   = finPagarData.length > 0;
