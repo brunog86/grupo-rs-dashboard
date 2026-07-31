@@ -7260,13 +7260,14 @@ function exportFinExcel(tipo) {
     [titulo],
     [subtitulo],
     [],
-    ['Vencimento', 'Fornecedor/Histórico', 'Categoria', 'Loja', 'Situação', 'Valor (R$)']
+    ['Vencimento', 'Fornecedor', 'Categoria', 'Observação', 'Loja', 'Situação', 'Valor (R$)']
   ];
   ordenados.forEach(r => {
     linhas.push([
       fmtData(r.dtVenc || r.emissao),
-      r.fornecedor || r.historico || '—',
+      r.fornecedor || '—',
       r.categoria || '',
+      r.historico || '',
       r.loja || '',
       finSituacaoLabel(r, hoje),
       Number((r.valorDoc || 0).toFixed(2))
@@ -7274,13 +7275,13 @@ function exportFinExcel(tipo) {
   });
   const totalGeral = ordenados.reduce((s, r) => s + (r.valorDoc || 0), 0);
   linhas.push([]);
-  linhas.push(['', '', '', '', 'Total', Number(totalGeral.toFixed(2))]);
+  linhas.push(['', '', '', '', '', 'Total', Number(totalGeral.toFixed(2))]);
 
   const ws = XLSX.utils.aoa_to_sheet(linhas);
-  ws['!cols'] = [{ wch: 12 }, { wch: 36 }, { wch: 22 }, { wch: 18 }, { wch: 12 }, { wch: 16 }];
+  ws['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 20 }, { wch: 34 }, { wch: 18 }, { wch: 12 }, { wch: 16 }];
   ws['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } }
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }
   ];
 
   const wb = XLSX.utils.book_new();
