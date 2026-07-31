@@ -790,7 +790,13 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
             <div class="chart-wrap"><canvas id="chartMarcaQty"></canvas></div>
           </div>
           <div class="chart-card full">
-            <div class="chart-title">Faturamento por período</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+              <div class="chart-title" style="margin:0">Faturamento por período</div>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <button class="apply-btn active" id="btnProdPeriodoAgrupado" onclick="setProdPeriodoModo('agrupado')" style="font-size:11px;padding:6px 10px">Agrupado</button>
+                <button class="apply-btn" id="btnProdPeriodoEmpilhado" onclick="setProdPeriodoModo('empilhado')" style="font-size:11px;padding:6px 10px">Empilhado</button>
+              </div>
+            </div>
             <div class="chart-wrap tall"><canvas id="chartProdPeriodo"></canvas></div>
           </div>
         </div>
@@ -2332,7 +2338,8 @@ let detalheVendasCache = [];
 let detalheVendasOrdenacao = 'horario'; // 'horario' | 'valor'
 let detalheVendasLojaFil = '';
 
-let vendMensalModo = 'agrupado'; // 'agrupado' | 'empilhado' — gráfico "Faturamento mensal por vendedor" 
+let vendMensalModo = 'agrupado'; // 'agrupado' | 'empilhado' — gráfico "Faturamento mensal por vendedor"
+let prodPeriodoModo = 'agrupado'; // 'agrupado' | 'empilhado' — gráfico "Faturamento por período" (Produtos & Marcas)
 
 async function renderDetalheVendas() {
   const listEl = document.getElementById('detalheVendasList');
@@ -5783,25 +5790,30 @@ async function renderProdPeriodoChart() {
 
   if (!periodosSort.length) return;
 
+  const stackedProd = prodPeriodoModo === 'empilhado';
+
   const barDatasetsProd = lojasNoDado.map((l, i) => ({
     label: l,
     data: periodosSort.map(p => porLojaPeriodo[l][p] || 0),
-    backgroundColor: colors[i], borderRadius: 4, borderSkipped: false
+    backgroundColor: colors[i], borderRadius: 4, borderSkipped: false,
+    stack: stackedProd ? 'vendas' : `bar${i}`
   }));
 
   // Rótulo de valor em cima de cada coluna — mesmo esquema do gráfico
   // "Faturamento mensal por vendedor": mede o texto formatado contra o
-  // espaço real da coluna e só gira na diagonal quem não cabe na horizontal.
+  // espaço real da coluna e só gira na diagonal quem não cabe na horizontal
+  // (no modo empilhado o rótulo fica centralizado dentro do segmento, então
+  // a rotação não se aplica).
   const larguraDisponivelProd = canvas.parentElement?.getBoundingClientRect().width || canvas.clientWidth || 800;
   const larguraCategoriaProd = larguraDisponivelProd / Math.max(periodosSort.length, 1);
-  const larguraSlotProd = larguraCategoriaProd / Math.max(lojasNoDado.length, 1);
+  const larguraSlotProd = stackedProd ? larguraCategoriaProd : larguraCategoriaProd / Math.max(lojasNoDado.length, 1);
 
   const medCtxProd = canvas.getContext('2d');
   medCtxProd.font = "600 10px 'Plus Jakarta Sans', sans-serif";
   const larguraTextoProd = (txt) => medCtxProd.measureText(txt).width;
-  const precisaGirarProd = (valor) => larguraTextoProd(fmtK(valor)) + 8 > larguraSlotProd;
+  const precisaGirarProd = (valor) => !stackedProd && (larguraTextoProd(fmtK(valor)) + 8 > larguraSlotProd);
 
-  const existeRotuloDiagonalProd = barDatasetsProd.some(ds => ds.data.some(v => v > 0 && precisaGirarProd(v)));
+  const existeRotuloDiagonalProd = !stackedProd && barDatasetsProd.some(ds => ds.data.some(v => v > 0 && precisaGirarProd(v)));
 
   const ctx = canvas.getContext('2d');
   charts['prodPeriodo'] = new Chart(ctx, {
@@ -5818,20 +5830,31 @@ async function renderProdPeriodoChart() {
         legend: { display: lojasNoDado.length > 1, position: 'bottom', labels: { color: '#9BA5C0', font: { family: 'Plus Jakarta Sans', size: 11 }, padding: 14, boxWidth: 12 } },
         datalabels: {
           display: (context) => (context.dataset.data[context.dataIndex] || 0) > 0,
-          anchor: 'end',
-          align: (context) => precisaGirarProd(context.dataset.data[context.dataIndex] || 0) ? 'end' : 'top',
+          anchor: stackedProd ? 'center' : 'end',
+          align: (context) => stackedProd ? 'center' : (precisaGirarProd(context.dataset.data[context.dataIndex] || 0) ? 'end' : 'top'),
           rotation: (context) => precisaGirarProd(context.dataset.data[context.dataIndex] || 0) ? -60 : 0,
-          color: '#6B7280',
+          color: stackedProd ? '#FFFFFF' : '#6B7280',
           font: { family: 'Plus Jakarta Sans', size: 10, weight: '600' },
           formatter: v => fmtK(v)
         }
       },
       scales: {
-        x: { ...chartDefaults.scales.x },
-        y: { ...chartDefaults.scales.y, beginAtZero: true, min: 0, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } }
+        x: { ...chartDefaults.scales.x, stacked: stackedProd },
+        y: { ...chartDefaults.scales.y, stacked: stackedProd, beginAtZero: true, min: 0, ticks: { ...chartDefaults.scales.y.ticks, callback: v => fmtK(v) } }
       }
     }
   });
+}
+
+// Alterna entre colunas agrupadas (lado a lado) e empilhadas no gráfico
+// "Faturamento por período" da aba Produtos & Marcas.
+function setProdPeriodoModo(modo) {
+  prodPeriodoModo = modo;
+  const btnA = document.getElementById('btnProdPeriodoAgrupado');
+  const btnE = document.getElementById('btnProdPeriodoEmpilhado');
+  if (btnA) btnA.classList.toggle('active', modo === 'agrupado');
+  if (btnE) btnE.classList.toggle('active', modo === 'empilhado');
+  renderProdPeriodoChart();
 }
 
 let mesesDisponiveisProdutosCache = [];
