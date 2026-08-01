@@ -1543,6 +1543,10 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
             <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Contato — telefone (opcional)</label>
             <input type="text" class="date-input" id="lpNovoContatoTelefone" style="width:100%">
           </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Recado para os convidados (opcional)</label>
+            <textarea class="date-input" id="lpNovoRecado" rows="3" style="width:100%;resize:vertical;font-family:inherit;padding:10px 12px" placeholder="Aparece no link público, entre o nome da loja/data e as instruções de reserva."></textarea>
+          </div>
           <button class="upload-btn" onclick="salvarNovaListaPresente()" style="align-self:flex-start">Salvar lista</button>
         </div>
       </div>
@@ -1563,6 +1567,13 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
             <button class="apply-btn" id="lpBtnRenomear" onclick="renomearListaPresente()" style="display:none">✏️ Renomear</button>
             <button class="apply-btn" id="lpBtnExcluir" onclick="excluirListaPresente()" style="display:none;border-color:var(--red);color:var(--red)">🗑️ Excluir</button>
           </div>
+        </div>
+
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-bottom:24px;">
+          <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Recado para os convidados (opcional)</label>
+          <div style="font-size:11.5px;color:var(--text2);margin-bottom:8px;">Aparece no link público, entre o nome da loja/data e as instruções de reserva.</div>
+          <textarea class="date-input" id="lpDetalheRecado" rows="3" style="width:100%;max-width:520px;resize:vertical;font-family:inherit;padding:10px 12px;display:block;margin-bottom:10px"></textarea>
+          <button class="apply-btn" onclick="salvarRecadoListaPresente()">Salvar recado</button>
         </div>
 
         <div class="section-title">Adicionar item</div>
@@ -9557,6 +9568,7 @@ function abrirNovaListaPresenteForm() {
   document.getElementById('lpNovaData').value = '';
   document.getElementById('lpNovoContatoNome').value = '';
   document.getElementById('lpNovoContatoTelefone').value = '';
+  document.getElementById('lpNovoRecado').value = '';
 
   const sel = document.getElementById('lpNovaLoja');
   const lojasDisponiveis = isAdmin() ? todasLojasCadastro : todasLojasCadastro.filter(l => lojasPermitidas.includes(l.nome));
@@ -9574,6 +9586,7 @@ async function salvarNovaListaPresente() {
   const dataEvento       = document.getElementById('lpNovaData').value || null;
   const contatoNome      = document.getElementById('lpNovoContatoNome').value.trim() || null;
   const contatoTelefone  = document.getElementById('lpNovoContatoTelefone').value.trim() || null;
+  const recado           = document.getElementById('lpNovoRecado').value.trim() || null;
 
   if (!titular) { showToast('Informe o nome do casal ou aniversariante.', 'error'); return; }
   if (!lojaId)  { showToast('Selecione a loja vinculada.', 'error'); return; }
@@ -9581,6 +9594,7 @@ async function salvarNovaListaPresente() {
   const { data, error } = await sb.from('listas_presente').insert({
     tipo, nome_titular: titular, loja_id: lojaId, data_evento: dataEvento,
     contato_nome: contatoNome, contato_telefone: contatoTelefone,
+    mensagem_convidados: recado,
     link_slug: gerarSlugAleatorio(), criado_por: currentUser.id
   }).select().single();
 
@@ -9611,9 +9625,21 @@ async function abrirDetalheListaPresente(listaId) {
   // de UI.
   document.getElementById('lpBtnRenomear').style.display = isAdmin() ? 'inline-block' : 'none';
   document.getElementById('lpBtnExcluir').style.display  = isAdmin() ? 'inline-block' : 'none';
+  document.getElementById('lpDetalheRecado').value = lista.mensagem_convidados || '';
 
   resetFormularioItemLista();
   await renderItensListaAtual();
+}
+
+async function salvarRecadoListaPresente() {
+  if (!listaPresenteAbertaObj) return;
+  const recado = document.getElementById('lpDetalheRecado').value.trim() || null;
+
+  const { error } = await sb.from('listas_presente').update({ mensagem_convidados: recado }).eq('id', listaPresenteAbertaId);
+  if (error) { console.error('[salvar recado]', error); showToast('Erro ao salvar o recado.', 'error'); return; }
+
+  listaPresenteAbertaObj.mensagem_convidados = recado;
+  showToast('Recado salvo!', 'success');
 }
 
 async function renomearListaPresente() {
@@ -10076,6 +10102,10 @@ async function carregarConteudoListaPublica() {
       <span style="font-size:13px;color:${tema.corTextoSuave};font-family:${tema.fonteCorpo}">${cabecalho.loja_nome}${dataTxt ? ' · ' + dataTxt : ''}</span>
       <span style="width:36px;height:1px;background:${tema.divisor};display:inline-block;"></span>
     </div>
+    ${cabecalho.mensagem_convidados ? `
+    <div style="text-align:center;font-size:13.5px;color:${tema.corTexto};line-height:1.6;margin-bottom:24px;font-family:${tema.fonteCorpo};white-space:pre-line;">
+      ${escapeHtmlLpub(cabecalho.mensagem_convidados)}
+    </div>` : ''}
     <div style="background:${tema.linkBg};border:1px solid ${tema.divisor};border-radius:12px;padding:12px 16px;margin-bottom:26px;text-align:center;font-size:12px;color:${tema.corTextoSuave};font-family:${tema.fonteCorpo}">
       Escolha um item e reserve com seu nome e telefone. Sua identidade fica visível só para a loja.
     </div>
