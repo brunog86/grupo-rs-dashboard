@@ -9912,6 +9912,15 @@ const TEMA_LISTA_PRESENTE = {
     iconeTopo: '💍',
     iconeItem: '💍',
     bgGradient: 'linear-gradient(150deg, #FBF4EE 0%, #F7E9E7 45%, #F3ECE0 100%)',
+    // Textura tipo aquarela pra página pública (várias manchas radiais
+    // suaves sobre a base creme) — o gradiente plano acima fica só pro PDF.
+    bgTextura: `
+      radial-gradient(ellipse 700px 500px at 8% 0%, rgba(199,140,150,0.30), transparent 60%),
+      radial-gradient(ellipse 600px 500px at 100% 15%, rgba(201,162,39,0.14), transparent 55%),
+      radial-gradient(ellipse 650px 550px at 0% 100%, rgba(183,110,121,0.22), transparent 55%),
+      radial-gradient(ellipse 700px 600px at 95% 100%, rgba(216,185,168,0.35), transparent 55%),
+      linear-gradient(150deg, #FBF4EE 0%, #F7E9E7 45%, #F3ECE0 100%)
+    `,
     corPrimaria: '#B76E79',
     corSecundaria: '#C9A227',
     corTexto: '#3A2E2A',
@@ -9931,6 +9940,15 @@ const TEMA_LISTA_PRESENTE = {
     iconeTopo: '🎉',
     iconeItem: '🎁',
     bgGradient: 'linear-gradient(150deg, #FFF3DE 0%, #FFE1EC 50%, #E8E0FF 100%)',
+    // Textura tipo aquarela pra página pública, na mesma ideia da de
+    // casamento mas com manchas mais vivas/festivas.
+    bgTextura: `
+      radial-gradient(ellipse 700px 500px at 5% 0%, rgba(255,183,77,0.30), transparent 60%),
+      radial-gradient(ellipse 650px 550px at 100% 10%, rgba(124,92,252,0.22), transparent 55%),
+      radial-gradient(ellipse 650px 550px at 0% 100%, rgba(233,73,122,0.20), transparent 55%),
+      radial-gradient(ellipse 700px 600px at 100% 100%, rgba(255,214,102,0.30), transparent 55%),
+      linear-gradient(150deg, #FFF3DE 0%, #FFE1EC 50%, #E8E0FF 100%)
+    `,
     corPrimaria: '#E9497A',
     corSecundaria: '#7C5CFC',
     corTexto: '#2E2440',
@@ -9977,8 +9995,8 @@ async function carregarConteudoListaPublica() {
   const tema = TEMA_LISTA_PRESENTE[cabecalho.tipo] || TEMA_LISTA_PRESENTE.aniversario;
   lpubTemaAtual = tema;
 
-  document.getElementById('listaPublicaScreen').style.background = tema.bgGradient;
-  document.body.style.background = tema.bgGradient;
+  document.getElementById('listaPublicaScreen').style.background = tema.bgTextura;
+  document.body.style.background = tema.bgTextura;
 
   const dataTxt = cabecalho.data_evento ? new Date(cabecalho.data_evento + 'T00:00:00').toLocaleDateString('pt-BR') : '';
 
@@ -9988,18 +10006,20 @@ async function carregarConteudoListaPublica() {
   conteudo.style.display = 'block';
   conteudo.innerHTML = `
     ${logoLoja ? `
-    <div style="text-align:left;margin-bottom:18px;">
-      <img src="${logoLoja}" style="max-width:320px;max-height:128px;object-fit:contain;display:inline-block;">
+    <div style="text-align:left;margin-bottom:10px;">
+      <img src="${logoLoja}" style="max-width:150px;max-height:60px;object-fit:contain;display:inline-block;">
     </div>` : ''}
-    <div style="text-align:center;margin-bottom:6px;font-size:34px;">${tema.iconeTopo}</div>
+    <div style="text-align:center;margin-bottom:6px;font-size:32px;">${tema.iconeTopo}</div>
     <div style="text-align:center;font-size:11px;font-weight:700;color:${tema.corPrimaria};text-transform:uppercase;letter-spacing:0.18em;margin-bottom:10px;font-family:${tema.fonteCorpo}">
       ${tema.label}
     </div>
-    <div style="text-align:center;font-size:30px;${tema.tituloEstilo}color:${tema.corTexto};margin-bottom:6px;font-family:${tema.fonteTitulo}">
+    <div style="text-align:center;font-size:32px;${tema.tituloEstilo}color:${tema.corTexto};margin-bottom:8px;font-family:${tema.fonteTitulo}">
       ${cabecalho.nome_titular}
     </div>
-    <div style="text-align:center;font-size:13px;color:${tema.corTextoSuave};margin-bottom:22px;font-family:${tema.fonteCorpo}">
-      ${cabecalho.loja_nome}${dataTxt ? ' · ' + dataTxt : ''}
+    <div style="text-align:center;display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:22px;">
+      <span style="width:36px;height:1px;background:${tema.divisor};display:inline-block;"></span>
+      <span style="font-size:13px;color:${tema.corTextoSuave};font-family:${tema.fonteCorpo}">${cabecalho.loja_nome}${dataTxt ? ' · ' + dataTxt : ''}</span>
+      <span style="width:36px;height:1px;background:${tema.divisor};display:inline-block;"></span>
     </div>
     <div style="background:${tema.linkBg};border:1px solid ${tema.divisor};border-radius:12px;padding:12px 16px;margin-bottom:26px;text-align:center;font-size:12px;color:${tema.corTextoSuave};font-family:${tema.fonteCorpo}">
       Escolha um item e reserve com seu nome e telefone. Sua identidade fica visível só para a loja.
