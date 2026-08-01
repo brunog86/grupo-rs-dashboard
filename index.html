@@ -6,6 +6,7 @@
 <title>Dashboard · Grupo RS</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -578,6 +579,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
     <button class="tab" id="tabBtnPagamentos" onclick="switchTab('pagamentos', this)">💳 Pagamentos</button>
     <button class="tab" id="tabBtnAnalise" onclick="switchTab('analise', this)">🔍 Análise</button>
     <button class="tab" id="tabBtnEvolucao" onclick="switchTab('evolucao', this)">📈 Evolução</button>
+    <button class="tab" id="tabBtnListasPresente" onclick="switchTab('listaspresente', this)">🎁 Listas de Presente</button>
     <button class="tab" id="tabBtnConfig" onclick="switchTab('config', this)" style="display:none">⚙ Configurações</button>
   </div>
 
@@ -1418,6 +1420,127 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         Categorias ainda não classificadas aparecem como <strong style="color:var(--red)">Não classificada</strong> nos indicadores acima — elas não são assumidas automaticamente em nenhum dos dois grupos.
       </div>
       <div id="finexCategoriasList" style="margin-bottom:28px;max-height:480px;overflow-y:auto;"></div>
+
+    </div>
+
+    <!-- LISTAS DE PRESENTE -->
+    <div class="tab-content" id="tab-listaspresente">
+
+      <!-- VIEW: lista de listas -->
+      <div id="lpViewListagem">
+        <div class="filter-bar">
+          <button class="upload-btn" onclick="abrirNovaListaPresenteForm()">+ Nova lista</button>
+        </div>
+        <div id="lpListasGrid" class="lojas-grid"></div>
+        <div id="lpListasEmpty" class="empty" style="display:none">
+          <div class="empty-icon">🎁</div>
+          <div style="font-size:15px;font-weight:500;margin-bottom:8px;color:var(--text)">Nenhuma lista ainda</div>
+          <div style="font-size:13px;color:var(--text2)">Clique em "+ Nova lista" pra criar a primeira.</div>
+        </div>
+      </div>
+
+      <!-- VIEW: nova lista (formulário) -->
+      <div id="lpViewNovaLista" style="display:none">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+          <button class="apply-btn" onclick="fecharNovaListaPresenteForm()">← Voltar</button>
+          <div class="section-title" style="margin:0">Nova lista de presentes</div>
+        </div>
+        <div style="max-width:520px;display:flex;flex-direction:column;gap:14px;">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Tipo</label>
+            <select class="date-input" id="lpNovoTipo" style="width:100%">
+              <option value="casamento">Casamento</option>
+              <option value="aniversario">Aniversário</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Nome do casal ou aniversariante</label>
+            <input type="text" class="date-input" id="lpNovoTitular" style="width:100%" placeholder="Ex: João e Maria">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Loja vinculada</label>
+            <select class="date-input" id="lpNovaLoja" style="width:100%"></select>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Data do evento (opcional)</label>
+            <input type="date" class="date-input" id="lpNovaData" style="width:100%">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Contato — nome (opcional)</label>
+            <input type="text" class="date-input" id="lpNovoContatoNome" style="width:100%">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Contato — telefone (opcional)</label>
+            <input type="text" class="date-input" id="lpNovoContatoTelefone" style="width:100%">
+          </div>
+          <button class="upload-btn" onclick="salvarNovaListaPresente()" style="align-self:flex-start">Salvar lista</button>
+        </div>
+      </div>
+
+      <!-- VIEW: detalhe da lista -->
+      <div id="lpViewDetalhe" style="display:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <button class="apply-btn" onclick="voltarParaListaDeListasPresente()">← Voltar</button>
+            <div>
+              <div style="font-size:16px;font-weight:800;color:var(--text)" id="lpDetalheTitulo"></div>
+              <div style="font-size:12px;color:var(--text2)" id="lpDetalheSub"></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="apply-btn" id="lpBtnGerarPDF" onclick="showToast('PDF da lista chega na Fase 3.', '')" style="border-color:var(--orange);color:var(--orange)">📄 Gerar PDF</button>
+            <button class="apply-btn" id="lpBtnLink" onclick="showToast('Link público chega na Fase 3.', '')" style="border-color:var(--blue2);color:var(--blue2)">🔗 Link público</button>
+          </div>
+        </div>
+
+        <div class="section-title">Adicionar item</div>
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:24px;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+            <div style="flex:1;min-width:200px;">
+              <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Código de barras</label>
+              <input type="text" class="date-input" id="lpItemBarras" style="width:100%" placeholder="Digite ou leia pela câmera" onkeydown="if(event.key==='Enter'){event.preventDefault();buscarItemPorBarrasLista();}">
+            </div>
+            <button class="apply-btn" onclick="buscarItemPorBarrasLista()">Buscar</button>
+            <button class="apply-btn" id="lpBtnScanBarras" onclick="alternarLeitorCodigoBarrasLista()" style="border-color:var(--blue2);color:var(--blue2)">📷 Ler pela câmera</button>
+          </div>
+          <div id="lpScannerWrap" style="display:none;margin-bottom:12px;">
+            <div id="lpScannerBarras" style="max-width:360px;"></div>
+          </div>
+          <div id="lpItemResultado" style="display:none;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+              <div>
+                <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Produto</label>
+                <input type="text" class="date-input" id="lpItemNome" style="width:100%">
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Marca</label>
+                <input type="text" class="date-input" id="lpItemMarca" style="width:100%">
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Preço unitário (R$)</label>
+                <input type="number" step="0.01" min="0" class="date-input" id="lpItemPreco" style="width:100%" readonly title="Preço de tabela do catálogo — não pode ser alterado" tabindex="-1">
+                <div style="font-size:10px;color:var(--text2);margin-top:4px">Preço de tabela (catálogo) — travado</div>
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Quantidade desejada</label>
+                <input type="number" min="1" step="1" value="1" class="date-input" id="lpItemQtd" style="width:100%">
+              </div>
+            </div>
+            <div style="margin-bottom:12px;">
+              <label style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">Foto do produto</label>
+              <input type="file" accept="image/*" capture="environment" id="lpItemFoto" onchange="previewFotoItemLista(event)">
+              <br><img id="lpItemFotoPreview" style="display:none;max-width:140px;border-radius:8px;margin-top:8px;border:1px solid var(--border2);">
+            </div>
+            <button class="upload-btn" onclick="confirmarAdicionarItemLista()">+ Adicionar à lista</button>
+          </div>
+          <div id="lpItemNaoEncontrado" style="display:none;color:var(--red);font-size:13px;font-weight:600;">
+            Produto não encontrado no catálogo desta loja. Verifique o código de barras ou aguarde a próxima sincronização do catálogo (sync_core.py) antes de incluí-lo na lista.
+          </div>
+        </div>
+
+        <div class="section-title">Itens da lista (<span id="lpItensCount">0</span>)</div>
+        <div id="lpItensList"></div>
+      </div>
 
     </div>
 
@@ -9287,7 +9410,310 @@ function switchTab(name, btn) {
   if (name === 'evolucao')    renderEvolucaoLeve();
   if (name === 'fatmeta')     renderFatMeta();
   if (name === 'finexec')     renderFinExecLeve();
+  if (name === 'listaspresente') renderListasPresenteLeve();
   if (name === 'config')      carregarListaUsuarios();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// LISTAS DE PRESENTE (Fase 2 — criação de lista e itens)
+// ════════════════════════════════════════════════════════════════════════════
+
+let listasPresenteAtual = [];
+let listaPresenteAbertaId = null;
+let listaPresenteAbertaObj = null;
+let lpFotoAtual = null;
+let lpBarrasScanner = null;
+let lpScannerAtivo = false;
+
+function podeGerenciarListasPresente() {
+  return isAdmin() || isGerente() || currentPerfil?.papel === 'vendedor';
+}
+
+// Token curto e não sequencial pro link público — sem 0/O/1/l/i pra não dar
+// confusão se alguém precisar digitar ou ler em voz alta.
+function gerarSlugAleatorio(tamanho = 12) {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let slug = '';
+  for (let i = 0; i < tamanho; i++) slug += chars[Math.floor(Math.random() * chars.length)];
+  return slug;
+}
+
+async function renderListasPresenteLeve() {
+  document.getElementById('lpViewListagem').style.display = 'block';
+  document.getElementById('lpViewNovaLista').style.display = 'none';
+  document.getElementById('lpViewDetalhe').style.display = 'none';
+
+  const { data: listas, error } = await sb.from('listas_presente')
+    .select('*, lojas(nome)')
+    .order('criado_em', { ascending: false });
+
+  if (error) { console.error('[listas_presente]', error); showToast('Erro ao carregar listas.', 'error'); return; }
+
+  listasPresenteAtual = listas || [];
+  const grid = document.getElementById('lpListasGrid');
+  const empty = document.getElementById('lpListasEmpty');
+
+  if (!listasPresenteAtual.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  grid.innerHTML = listasPresenteAtual.map(l => {
+    const tipoIcon = l.tipo === 'casamento' ? '💍' : '🎂';
+    const dataTxt = l.data_evento ? new Date(l.data_evento + 'T00:00:00').toLocaleDateString('pt-BR') : 'sem data definida';
+    const statusTxt = l.status === 'ativa' ? 'Ativa' : 'Encerrada';
+    const statusCor = l.status === 'ativa' ? 'var(--green)' : 'var(--text3)';
+    return `
+      <div class="loja-row" style="cursor:pointer;grid-template-columns:1fr auto;gap:12px" onclick="abrirDetalheListaPresente('${l.id}')">
+        <div class="loja-name">${tipoIcon} ${l.nome_titular}
+          <span style="font-size:11px;color:var(--text2);font-weight:500;margin-left:8px">${l.lojas?.nome || ''} · ${dataTxt}</span>
+        </div>
+        <div style="font-size:12px;font-weight:700;color:${statusCor}">${statusTxt}</div>
+      </div>`;
+  }).join('');
+}
+
+function abrirNovaListaPresenteForm() {
+  document.getElementById('lpViewListagem').style.display = 'none';
+  document.getElementById('lpViewNovaLista').style.display = 'block';
+  document.getElementById('lpViewDetalhe').style.display = 'none';
+
+  document.getElementById('lpNovoTipo').value = 'casamento';
+  document.getElementById('lpNovoTitular').value = '';
+  document.getElementById('lpNovaData').value = '';
+  document.getElementById('lpNovoContatoNome').value = '';
+  document.getElementById('lpNovoContatoTelefone').value = '';
+
+  const sel = document.getElementById('lpNovaLoja');
+  const lojasDisponiveis = isAdmin() ? todasLojasCadastro : todasLojasCadastro.filter(l => lojasPermitidas.includes(l.nome));
+  sel.innerHTML = lojasDisponiveis.map(l => `<option value="${l.id}">${l.nome}</option>`).join('');
+}
+
+function fecharNovaListaPresenteForm() {
+  renderListasPresenteLeve();
+}
+
+async function salvarNovaListaPresente() {
+  const tipo            = document.getElementById('lpNovoTipo').value;
+  const titular          = document.getElementById('lpNovoTitular').value.trim();
+  const lojaId           = document.getElementById('lpNovaLoja').value;
+  const dataEvento       = document.getElementById('lpNovaData').value || null;
+  const contatoNome      = document.getElementById('lpNovoContatoNome').value.trim() || null;
+  const contatoTelefone  = document.getElementById('lpNovoContatoTelefone').value.trim() || null;
+
+  if (!titular) { showToast('Informe o nome do casal ou aniversariante.', 'error'); return; }
+  if (!lojaId)  { showToast('Selecione a loja vinculada.', 'error'); return; }
+
+  const { data, error } = await sb.from('listas_presente').insert({
+    tipo, nome_titular: titular, loja_id: lojaId, data_evento: dataEvento,
+    contato_nome: contatoNome, contato_telefone: contatoTelefone,
+    link_slug: gerarSlugAleatorio(), criado_por: currentUser.id
+  }).select().single();
+
+  if (error) { console.error('[listas_presente insert]', error); showToast('Erro ao criar a lista.', 'error'); return; }
+
+  showToast('Lista criada!', 'success');
+  await abrirDetalheListaPresente(data.id);
+}
+
+async function abrirDetalheListaPresente(listaId) {
+  listaPresenteAbertaId = listaId;
+  const { data: lista, error } = await sb.from('listas_presente').select('*, lojas(nome)').eq('id', listaId).single();
+  if (error || !lista) { console.error('[listas_presente detalhe]', error); showToast('Não foi possível abrir a lista.', 'error'); return; }
+  listaPresenteAbertaObj = lista;
+
+  document.getElementById('lpViewListagem').style.display = 'none';
+  document.getElementById('lpViewNovaLista').style.display = 'none';
+  document.getElementById('lpViewDetalhe').style.display = 'block';
+
+  const tipoTxt = lista.tipo === 'casamento' ? 'Casamento' : 'Aniversário';
+  const dataTxt = lista.data_evento ? new Date(lista.data_evento + 'T00:00:00').toLocaleDateString('pt-BR') : 'sem data definida';
+  document.getElementById('lpDetalheTitulo').textContent = lista.nome_titular;
+  document.getElementById('lpDetalheSub').textContent = `${tipoTxt} · ${lista.lojas?.nome || ''} · ${dataTxt}`;
+
+  resetFormularioItemLista();
+  await renderItensListaAtual();
+}
+
+function voltarParaListaDeListasPresente() {
+  pararLeitorCodigoBarrasLista();
+  renderListasPresenteLeve();
+}
+
+function resetFormularioItemLista() {
+  document.getElementById('lpItemBarras').value = '';
+  document.getElementById('lpItemNome').value = '';
+  document.getElementById('lpItemMarca').value = '';
+  document.getElementById('lpItemPreco').value = '';
+  document.getElementById('lpItemQtd').value = '1';
+  document.getElementById('lpItemResultado').style.display = 'none';
+  document.getElementById('lpItemNaoEncontrado').style.display = 'none';
+  document.getElementById('lpItemFoto').value = '';
+  document.getElementById('lpItemFotoPreview').style.display = 'none';
+  document.getElementById('lpItemFotoPreview').src = '';
+  lpFotoAtual = null;
+}
+
+// Busca o produto pelo código de barras na fn_produto_catalogo_por_barras —
+// preço de tabela REAL do C8 (produtos_catalogo, sincronizado do Firebird),
+// não mais a média de vendas de fn_buscar_produtos. O preço vem travado e
+// somente leitura: o vendedor não pode digitar/ajustar o valor (decisão
+// tomada nesta sessão — ver seção 3 do HANDOFF). Se o produto não estiver
+// no catálogo sincronizado, bloqueia a inclusão do item.
+async function buscarItemPorBarrasLista() {
+  const barras = document.getElementById('lpItemBarras').value.trim();
+  if (!barras) { showToast('Digite ou leia um código de barras.', 'error'); return; }
+
+  pararLeitorCodigoBarrasLista();
+
+  const lojaId = listaPresenteAbertaObj?.loja_id;
+  if (!lojaId) { showToast('Não foi possível identificar a loja da lista.', 'error'); return; }
+
+  const rows = await callRpc('fn_produto_catalogo_por_barras', { p_barras: barras, p_loja_id: lojaId }, false);
+  const achado = rows && rows[0];
+
+  if (!achado) {
+    document.getElementById('lpItemResultado').style.display = 'none';
+    document.getElementById('lpItemNaoEncontrado').style.display = 'block';
+    return;
+  }
+
+  document.getElementById('lpItemNaoEncontrado').style.display = 'none';
+  document.getElementById('lpItemResultado').style.display = 'block';
+  document.getElementById('lpItemNome').value  = achado.produto || '';
+  document.getElementById('lpItemMarca').value = achado.marca || '';
+  document.getElementById('lpItemPreco').value = achado.valor_venda != null ? parseFloat(achado.valor_venda).toFixed(2) : '';
+}
+
+function previewFotoItemLista(event) {
+  const file = event.target.files[0];
+  if (!file) { lpFotoAtual = null; return; }
+  lpFotoAtual = file;
+  const preview = document.getElementById('lpItemFotoPreview');
+  preview.src = URL.createObjectURL(file);
+  preview.style.display = 'block';
+}
+
+async function confirmarAdicionarItemLista() {
+  const barras = document.getElementById('lpItemBarras').value.trim();
+  const nome   = document.getElementById('lpItemNome').value.trim();
+  const marca  = document.getElementById('lpItemMarca').value.trim() || null;
+  const preco  = parseFloat(document.getElementById('lpItemPreco').value);
+  const qtd    = parseInt(document.getElementById('lpItemQtd').value) || 1;
+
+  if (!nome)  { showToast('Preencha o nome do produto.', 'error'); return; }
+  if (isNaN(preco) || preco < 0) { showToast('Informe um preço válido.', 'error'); return; }
+  if (qtd < 1) { showToast('Quantidade precisa ser pelo menos 1.', 'error'); return; }
+
+  let fotoUrl = null;
+  if (lpFotoAtual) {
+    showToast('Enviando foto...', '');
+    const ext = (lpFotoAtual.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const caminho = `${listaPresenteAbertaId}/${Date.now()}.${ext}`;
+    const { error: erroUpload } = await sb.storage.from('listas-presente-fotos').upload(caminho, lpFotoAtual, { upsert: false });
+    if (erroUpload) { console.error('[foto upload]', erroUpload); showToast('Erro ao enviar a foto.', 'error'); return; }
+    const { data: pub } = sb.storage.from('listas-presente-fotos').getPublicUrl(caminho);
+    fotoUrl = pub.publicUrl;
+  }
+
+  const { error } = await sb.from('lista_itens').insert({
+    lista_id: listaPresenteAbertaId,
+    produto_barras: barras || null,
+    produto_nome: nome,
+    produto_marca: marca,
+    preco_unitario: preco,
+    quantidade_desejada: qtd,
+    foto_url: fotoUrl
+  });
+
+  if (error) { console.error('[lista_itens insert]', error); showToast('Erro ao adicionar o item.', 'error'); return; }
+
+  showToast('Item adicionado à lista!', 'success');
+  resetFormularioItemLista();
+  await renderItensListaAtual();
+}
+
+async function renderItensListaAtual() {
+  const { data: itens, error } = await sb.from('lista_itens').select('*').eq('lista_id', listaPresenteAbertaId).order('criado_em');
+  if (error) { console.error('[lista_itens select]', error); return; }
+
+  document.getElementById('lpItensCount').textContent = itens.length;
+  const listEl = document.getElementById('lpItensList');
+
+  if (!itens.length) {
+    listEl.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:12px 0">Nenhum item adicionado ainda.</div>';
+    return;
+  }
+
+  listEl.innerHTML = itens.map(it => `
+    <div style="display:flex;align-items:center;gap:14px;padding:12px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;">
+      ${it.foto_url
+        ? `<img src="${it.foto_url}" style="width:52px;height:52px;object-fit:cover;border-radius:8px;flex-shrink:0;">`
+        : `<div style="width:52px;height:52px;border-radius:8px;background:var(--bg4);flex-shrink:0;"></div>`}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:var(--text)">${it.produto_nome}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${it.produto_marca ? it.produto_marca + ' · ' : ''}Qtd. desejada: ${it.quantidade_desejada}${it.produto_barras ? ' · Cód: ' + it.produto_barras : ''}</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-size:14px;font-weight:700;color:var(--text)">${fmt(it.preco_unitario)}</div>
+      </div>
+      <button class="apply-btn" style="font-size:11px;padding:5px 10px;color:var(--red);border-color:var(--red)" onclick="removerItemListaPresente('${it.id}')">Remover</button>
+    </div>`).join('');
+}
+
+async function removerItemListaPresente(itemId) {
+  if (!confirm('Remover este item da lista?')) return;
+  const { error } = await sb.from('lista_itens').delete().eq('id', itemId);
+  if (error) { console.error('[lista_itens delete]', error); showToast('Erro ao remover o item.', 'error'); return; }
+  showToast('Item removido.', '');
+  await renderItensListaAtual();
+}
+
+// ── Leitura de código de barras pela câmera (html5-qrcode) ─────────────────
+async function alternarLeitorCodigoBarrasLista() {
+  if (lpScannerAtivo) { pararLeitorCodigoBarrasLista(); return; }
+
+  document.getElementById('lpScannerWrap').style.display = 'block';
+  lpBarrasScanner = new Html5Qrcode('lpScannerBarras');
+  try {
+    await lpBarrasScanner.start(
+      { facingMode: 'environment' },
+      {
+        fps: 10,
+        qrbox: { width: 260, height: 140 },
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E
+        ]
+      },
+      (textoLido) => {
+        document.getElementById('lpItemBarras').value = textoLido;
+        buscarItemPorBarrasLista();
+      },
+      () => {} // callback de "não achou nada neste frame" — chamado continuamente, ignora
+    );
+    lpScannerAtivo = true;
+    const btn = document.getElementById('lpBtnScanBarras');
+    if (btn) btn.textContent = '✕ Parar câmera';
+  } catch (e) {
+    console.error('[scanner barras]', e);
+    showToast('Não foi possível acessar a câmera. Verifique a permissão do navegador.', 'error');
+    document.getElementById('lpScannerWrap').style.display = 'none';
+  }
+}
+
+function pararLeitorCodigoBarrasLista() {
+  if (lpBarrasScanner && lpScannerAtivo) {
+    lpBarrasScanner.stop().then(() => lpBarrasScanner.clear()).catch(() => {});
+  }
+  lpScannerAtivo = false;
+  const wrap = document.getElementById('lpScannerWrap');
+  if (wrap) wrap.style.display = 'none';
+  const btn = document.getElementById('lpBtnScanBarras');
+  if (btn) btn.textContent = '📷 Ler pela câmera';
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
