@@ -9705,6 +9705,14 @@ async function confirmarAdicionarItemLista() {
   await renderItensListaAtual();
 }
 
+function statusExibicaoReservaLp(r, agora) {
+  if (r.status === 'comprado')  return { label: 'Comprado',  cor: 'var(--green)' };
+  if (r.status === 'cancelado') return { label: 'Cancelado', cor: 'var(--text2)' };
+  if (r.status === 'reservado' && new Date(r.expira_em) < agora) return { label: 'Expirado', cor: 'var(--text2)' };
+  if (r.status === 'reservado') return { label: 'Reservado', cor: 'var(--blue2)' };
+  return { label: r.status, cor: 'var(--text2)' };
+}
+
 async function renderItensListaAtual() {
   const { data: itens, error } = await sb.from('lista_itens').select('*').eq('lista_id', listaPresenteAbertaId).order('criado_em');
   if (error) { console.error('[lista_itens select]', error); return; }
@@ -9717,19 +9725,22 @@ async function renderItensListaAtual() {
     return;
   }
 
-  // Busca as reservas de todos os itens de uma vez, pra mostrar pro vendedor
-  // quantos já foram reservados por convidados (ainda válidos, não
-  // expirados) e quantos já foram comprados. RLS de lista_item_reservas já
-  // libera essa leitura pra quem é dono da lista (ou admin/gerente).
+  // Busca as reservas de todos os itens de uma vez — usado tanto pros selos
+  // de contagem (Reservada/Comprada) quanto pro painel de detalhe onde o
+  // vendedor vê quem reservou (nome/telefone, só aqui, nunca no link
+  // público) e confirma a compra. RLS de lista_item_reservas já libera essa
+  // leitura/escrita pra quem é dono da lista (ou admin/gerente).
   const itemIds = itens.map(it => it.id);
   const { data: reservas, error: errReservas } = await sb
     .from('lista_item_reservas')
-    .select('item_id, status, expira_em')
-    .in('item_id', itemIds);
+    .select('id, item_id, convidado_nome, convidado_telefone, status, reservado_em, expira_em')
+    .in('item_id', itemIds)
+    .order('reservado_em');
   if (errReservas) console.error('[lista_item_reservas select]', errReservas);
 
   const agora = new Date();
   const contagemPorItem = {};
+  const reservasPorItem = {};
   (reservas || []).forEach(r => {
     if (!contagemPorItem[r.item_id]) contagemPorItem[r.item_id] = { reservada: 0, comprada: 0 };
     if (r.status === 'comprado') {
@@ -9737,30 +9748,76 @@ async function renderItensListaAtual() {
     } else if (r.status === 'reservado' && new Date(r.expira_em) >= agora) {
       contagemPorItem[r.item_id].reservada++;
     }
+    (reservasPorItem[r.item_id] = reservasPorItem[r.item_id] || []).push(r);
   });
 
   listEl.innerHTML = itens.map(it => {
     const c = contagemPorItem[it.id] || { reservada: 0, comprada: 0 };
+    const reservasDoItem = reservasPorItem[it.id] || [];
     return `
-    <div style="display:flex;align-items:center;gap:14px;padding:12px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;">
-      ${it.foto_url
-        ? `<img src="${it.foto_url}" style="width:52px;height:52px;object-fit:cover;border-radius:8px;flex-shrink:0;">`
-        : `<div style="width:52px;height:52px;border-radius:8px;background:var(--bg4);flex-shrink:0;"></div>`}
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600;color:var(--text)">${it.produto_nome}</div>
-        <div style="font-size:11px;color:var(--text2);margin-top:2px">${it.produto_marca ? it.produto_marca + ' · ' : ''}${it.produto_barras ? 'Cód: ' + it.produto_barras : ''}</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
-          <span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--bg4);color:var(--text2);">Desejada: ${it.quantidade_desejada}</span>
-          ${c.reservada > 0 ? `<span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(37,99,235,0.15);color:var(--blue2);">Reservada: ${c.reservada}</span>` : ''}
-          ${c.comprada > 0 ? `<span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(5,150,105,0.15);color:var(--green);">Comprada: ${c.comprada}</span>` : ''}
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:14px;padding:12px 14px;">
+        ${it.foto_url
+          ? `<img src="${it.foto_url}" style="width:52px;height:52px;object-fit:cover;border-radius:8px;flex-shrink:0;">`
+          : `<div style="width:52px;height:52px;border-radius:8px;background:var(--bg4);flex-shrink:0;"></div>`}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--text)">${it.produto_nome}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">${it.produto_marca ? it.produto_marca + ' · ' : ''}${it.produto_barras ? 'Cód: ' + it.produto_barras : ''}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center;">
+            <span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--bg4);color:var(--text2);">Desejada: ${it.quantidade_desejada}</span>
+            ${c.reservada > 0 ? `<span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(37,99,235,0.15);color:var(--blue2);">Reservada: ${c.reservada}</span>` : ''}
+            ${c.comprada > 0 ? `<span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(5,150,105,0.15);color:var(--green);">Comprada: ${c.comprada}</span>` : ''}
+            ${reservasDoItem.length > 0 ? `<button type="button" class="lp-toggle-reservas" data-item-id="${it.id}" style="font-size:10.5px;font-weight:700;color:var(--blue2);background:none;border:none;cursor:pointer;padding:2px 4px;">Ver reservas (${reservasDoItem.length}) ▾</button>` : ''}
+          </div>
         </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="font-size:14px;font-weight:700;color:var(--text)">${fmt(it.preco_unitario)}</div>
+        </div>
+        <button class="apply-btn" style="font-size:11px;padding:5px 10px;color:var(--red);border-color:var(--red)" onclick="removerItemListaPresente('${it.id}')">Remover</button>
       </div>
-      <div style="text-align:right;flex-shrink:0">
-        <div style="font-size:14px;font-weight:700;color:var(--text)">${fmt(it.preco_unitario)}</div>
-      </div>
-      <button class="apply-btn" style="font-size:11px;padding:5px 10px;color:var(--red);border-color:var(--red)" onclick="removerItemListaPresente('${it.id}')">Remover</button>
+      ${reservasDoItem.length > 0 ? `
+      <div class="lp-reservas-detalhe" data-item-id="${it.id}" style="display:none;padding:0 14px 12px;border-top:1px solid var(--border);">
+        ${reservasDoItem.map(r => {
+          const st = statusExibicaoReservaLp(r, agora);
+          const podeConfirmar = r.status === 'reservado' && new Date(r.expira_em) >= agora;
+          return `
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtmlLpub(r.convidado_nome)}</div>
+              <div style="font-size:11px;color:var(--text2);margin-top:1px;">${escapeHtmlLpub(r.convidado_telefone)} · reservado em ${new Date(r.reservado_em).toLocaleDateString('pt-BR')}</div>
+            </div>
+            <span style="font-size:10.5px;font-weight:700;color:${st.cor};">${st.label}</span>
+            ${podeConfirmar ? `<button type="button" class="lp-confirmar-compra" data-reserva-id="${r.id}" style="font-size:11px;padding:5px 10px;border-radius:var(--radius-sm);border:1px solid var(--green);color:var(--green);background:none;cursor:pointer;white-space:nowrap;">Confirmar compra</button>` : ''}
+          </div>`;
+        }).join('')}
+      </div>` : ''}
     </div>`;
   }).join('');
+
+  // Toggle do painel de reservas por item
+  listEl.querySelectorAll('.lp-toggle-reservas').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const painel = listEl.querySelector(`.lp-reservas-detalhe[data-item-id="${btn.dataset.itemId}"]`);
+      if (painel) painel.style.display = painel.style.display === 'none' ? 'block' : 'none';
+    });
+  });
+
+  // Confirmar compra (marca a reserva como 'comprado')
+  listEl.querySelectorAll('.lp-confirmar-compra').forEach(btn => {
+    btn.addEventListener('click', () => confirmarCompraReservaLista(btn.dataset.reservaId));
+  });
+}
+
+async function confirmarCompraReservaLista(reservaId) {
+  if (!confirm('Confirmar que este item foi comprado pelo convidado?')) return;
+  const { error } = await sb.from('lista_item_reservas').update({
+    status: 'comprado',
+    confirmado_em: new Date().toISOString(),
+    confirmado_por: currentUser.id
+  }).eq('id', reservaId);
+  if (error) { console.error('[confirmar compra]', error); showToast('Erro ao confirmar a compra.', 'error'); return; }
+  showToast('Compra confirmada!', 'success');
+  await renderItensListaAtual();
 }
 
 // ── Fase 3: link público + PDF ──────────────────────────────────────────────
