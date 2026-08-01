@@ -375,6 +375,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 }
 .papel-admin { background: #FEF3C7; color: #92400E; }
 .papel-gerente { background: #DBEAFE; color: #1E40AF; }
+.papel-vendedor { background: #FCE7F3; color: #9D174D; }
 .papel-visualizador { background: #E5E7EB; color: #374151; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
 .status-ativo { background: var(--green); }
@@ -512,6 +513,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
       <select id="modalPapel" onchange="toggleLojasField()">
         <option value="visualizador">Visualizador (somente leitura)</option>
         <option value="gerente">Gerente (lê e carrega arquivos)</option>
+        <option value="vendedor">Vendedor (só Listas de Presente, só as próprias)</option>
         <option value="admin">Admin (acesso total + gestão de usuários)</option>
       </select>
     </div>
@@ -1573,7 +1575,7 @@ async function iniciarAposLogin() {
   badge.style.display = 'flex';
   document.getElementById('userNameLabel').textContent = currentPerfil.nome;
   const papelLabel = document.getElementById('userPapelLabel');
-  papelLabel.textContent = currentPerfil.papel === 'admin' ? 'Admin' : currentPerfil.papel === 'gerente' ? 'Gerente' : 'Visualizador';
+  papelLabel.textContent = currentPerfil.papel === 'admin' ? 'Admin' : currentPerfil.papel === 'gerente' ? 'Gerente' : currentPerfil.papel === 'vendedor' ? 'Vendedor' : 'Visualizador';
   papelLabel.className = 'papel-badge papel-' + currentPerfil.papel;
   document.getElementById('userAvatar').textContent = currentPerfil.nome.substring(0,1).toUpperCase();
 
@@ -1788,6 +1790,7 @@ const ABAS_CONTROLAVEIS = [
   { id: 'pagamentos', nome: '💳 Pagamentos',            idBtn: 'tabBtnPagamentos' },
   { id: 'analise',    nome: '🔍 Análise',               idBtn: 'tabBtnAnalise' },
   { id: 'evolucao',   nome: '📈 Evolução',              idBtn: 'tabBtnEvolucao' },
+  { id: 'listaspresente', nome: '🎁 Listas de Presente', idBtn: 'tabBtnListasPresente' },
 ];
 
 function toggleLojasField() {
