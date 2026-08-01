@@ -1560,6 +1560,8 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
           <div style="display:flex;gap:8px;">
             <button class="apply-btn" id="lpBtnGerarPDF" onclick="gerarPdfListaPresente()" style="border-color:var(--orange);color:var(--orange)">📄 Gerar PDF</button>
             <button class="apply-btn" id="lpBtnLink" onclick="copiarLinkPublicoLista()" style="border-color:var(--blue2);color:var(--blue2)">🔗 Link público</button>
+            <button class="apply-btn" id="lpBtnRenomear" onclick="renomearListaPresente()" style="display:none">✏️ Renomear</button>
+            <button class="apply-btn" id="lpBtnExcluir" onclick="excluirListaPresente()" style="display:none;border-color:var(--red);color:var(--red)">🗑️ Excluir</button>
           </div>
         </div>
 
@@ -9603,8 +9605,46 @@ async function abrirDetalheListaPresente(listaId) {
   document.getElementById('lpDetalheTitulo').textContent = lista.nome_titular;
   document.getElementById('lpDetalheSub').textContent = `${tipoTxt} · ${lista.lojas?.nome || ''} · ${dataTxt}`;
 
+  // Renomear/Excluir a lista são restritos a admin (pedido nesta sessão) —
+  // a policy de DELETE no Supabase também só libera admin (ver
+  // listas_presente_delete_policy.sql), então isso não é só uma restrição
+  // de UI.
+  document.getElementById('lpBtnRenomear').style.display = isAdmin() ? 'inline-block' : 'none';
+  document.getElementById('lpBtnExcluir').style.display  = isAdmin() ? 'inline-block' : 'none';
+
   resetFormularioItemLista();
   await renderItensListaAtual();
+}
+
+async function renomearListaPresente() {
+  if (!listaPresenteAbertaObj) return;
+  const nomeAtual = listaPresenteAbertaObj.nome_titular;
+  const novoNome = prompt('Novo nome do casal/aniversariante:', nomeAtual);
+  if (novoNome === null) return; // cancelou
+  const novoNomeTrim = novoNome.trim();
+  if (!novoNomeTrim) { showToast('O nome não pode ficar em branco.', 'error'); return; }
+  if (novoNomeTrim === nomeAtual) return;
+
+  const { error } = await sb.from('listas_presente').update({ nome_titular: novoNomeTrim }).eq('id', listaPresenteAbertaId);
+  if (error) { console.error('[renomear lista]', error); showToast('Erro ao renomear a lista.', 'error'); return; }
+
+  listaPresenteAbertaObj.nome_titular = novoNomeTrim;
+  document.getElementById('lpDetalheTitulo').textContent = novoNomeTrim;
+  showToast('Lista renomeada!', 'success');
+}
+
+async function excluirListaPresente() {
+  if (!listaPresenteAbertaObj) return;
+  const nome = listaPresenteAbertaObj.nome_titular;
+  if (!confirm(`Excluir a lista "${nome}"? Isso apaga todos os itens e reservas dela — incluindo reservas já confirmadas como compradas. Essa ação não pode ser desfeita.`)) return;
+
+  const { error } = await sb.from('listas_presente').delete().eq('id', listaPresenteAbertaId);
+  if (error) { console.error('[excluir lista]', error); showToast('Erro ao excluir a lista.', 'error'); return; }
+
+  showToast('Lista excluída.', 'success');
+  listaPresenteAbertaId = null;
+  listaPresenteAbertaObj = null;
+  voltarParaListaDeListasPresente();
 }
 
 function voltarParaListaDeListasPresente() {
