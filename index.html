@@ -279,7 +279,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
   border-radius: var(--radius-sm); padding: 14px 20px;
   font-size: 13px; font-weight: 500; color: var(--text);
   opacity: 0; transform: translateY(10px); transition: all 0.3s;
-  z-index: 999; max-width: 300px; box-shadow: var(--shadow-lg);
+  z-index: 4000; max-width: 300px; box-shadow: var(--shadow-lg);
 }
 .toast.show { opacity: 1; transform: translateY(0); }
 .toast.success { border-left-color: var(--green); }
@@ -332,6 +332,30 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
   position: fixed; inset: 0; z-index: 2000;
   background: linear-gradient(135deg, #0F1523 0%, #1C2030 100%);
   display: flex; align-items: center; justify-content: center;
+}
+
+/* ── PÁGINA PÚBLICA DA LISTA DE PRESENTE (convidados, sem login) ──────────
+   Rota: mesma index.html, via query string ?lista=SLUG (ver comentário em
+   gerarLinkPublicoLista). Fica acima do loginScreen (z-index maior) e é a
+   ÚNICA coisa mostrada quando o parâmetro está presente — o resto do
+   dashboard nem chega a inicializar (ver DOMContentLoaded). */
+#listaPublicaScreen {
+  position: fixed; inset: 0; z-index: 2500;
+  overflow-y: auto; padding: 36px 16px 60px;
+}
+.lpub-container { max-width: 640px; margin: 0 auto; }
+.lpub-item { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 12px; margin-bottom: 10px; }
+.lpub-item.indisponivel { opacity: 0.5; }
+.lpub-btn-reservar { border: none; border-radius: 99px; padding: 9px 18px; font-size: 12.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.lpub-modal-overlay {
+  position: fixed; inset: 0; z-index: 2600; background: rgba(20,15,25,0.6);
+  display: none; align-items: center; justify-content: center; padding: 16px;
+}
+.lpub-modal-overlay.show { display: flex; }
+.lpub-modal-box { background: #fff; border-radius: 16px; padding: 28px; width: 100%; max-width: 380px; }
+.lpub-modal-box input {
+  width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #ddd;
+  font-size: 14px; box-sizing: border-box; font-family: inherit;
 }
 .login-card {
   background: var(--bg2); border-radius: 16px; padding: 40px 36px;
@@ -414,6 +438,40 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 </style>
 </head>
 <body>
+
+<!-- ════════════════ PÁGINA PÚBLICA: LISTA DE PRESENTE (sem login) ════════════════ -->
+<div id="listaPublicaScreen" style="display:none">
+  <div class="lpub-container">
+    <div id="lpubLoading" style="text-align:center;color:#F4F6FF;padding:100px 20px;font-size:14px;">Carregando lista...</div>
+    <div id="lpubErro" style="display:none;text-align:center;color:#F4F6FF;padding:100px 20px;">
+      <div style="font-size:40px;margin-bottom:12px;">💔</div>
+      <div style="font-size:15px;font-weight:600;">Não encontramos essa lista, ou ela não está mais ativa.</div>
+      <div style="font-size:12.5px;color:#9BA5C0;margin-top:8px;">Confira se o link foi copiado corretamente.</div>
+    </div>
+    <div id="lpubConteudo" style="display:none;"></div>
+  </div>
+
+  <div class="lpub-modal-overlay" id="lpubModalReserva">
+    <div class="lpub-modal-box">
+      <div style="font-size:16px;font-weight:800;margin-bottom:4px;color:#222" id="lpubModalItemNome"></div>
+      <div style="font-size:12px;color:#777;margin-bottom:18px;">Preencha seus dados para confirmar a reserva</div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:11px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:0.05em;display:block;margin-bottom:5px;">Seu nome</label>
+        <input type="text" id="lpubReservaNome" placeholder="Nome completo">
+      </div>
+      <div style="margin-bottom:8px;">
+        <label style="font-size:11px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:0.05em;display:block;margin-bottom:5px;">Seu telefone (WhatsApp)</label>
+        <input type="tel" id="lpubReservaTelefone" placeholder="(00) 00000-0000">
+      </div>
+      <div style="font-size:11px;color:#999;margin-bottom:14px;">Sua reserva vale por 2 dias úteis. Outros convidados não veem seu nome — só a loja.</div>
+      <div id="lpubReservaErro" style="display:none;color:#C0392B;font-size:12.5px;margin-bottom:12px;"></div>
+      <div style="display:flex;gap:10px;">
+        <button onclick="fecharModalReservaLista()" style="flex:1;padding:11px;border-radius:8px;border:1px solid #ddd;background:#fff;font-size:13px;font-weight:600;cursor:pointer;">Cancelar</button>
+        <button id="lpubBtnConfirmarReserva" onclick="confirmarReservaLista()" style="flex:1;padding:11px;border-radius:8px;border:none;font-size:13px;font-weight:700;cursor:pointer;color:#fff;">Confirmar reserva</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ════════════════ TELA DE LOGIN ════════════════ -->
 <div id="loginScreen">
@@ -9737,6 +9795,140 @@ const TEMA_LISTA_PRESENTE = {
   }
 };
 
+// ── Fase 4: página pública da lista (convidados, sem login) ────────────────
+// Ativada via ?lista=SLUG na mesma index.html (ver DOMContentLoaded mais
+// abaixo e o comentário em gerarLinkPublicoLista). Usa o mesmo tema visual
+// (TEMA_LISTA_PRESENTE) do PDF, pra manter a identidade consistente entre o
+// PDF que o vendedor entrega e o link que o convidado abre.
+let lpubSlugAtual = null;
+let lpubItemSelecionadoId = null;
+let lpubTemaAtual = null;
+
+async function iniciarPaginaPublicaLista(slug) {
+  lpubSlugAtual = slug;
+  await carregarConteudoListaPublica();
+}
+
+async function carregarConteudoListaPublica() {
+  const { data: rows, error } = await sb.rpc('fn_lista_publica', { p_slug: lpubSlugAtual });
+
+  document.getElementById('lpubLoading').style.display = 'none';
+
+  if (error || !rows || !rows.length) {
+    console.error('[fn_lista_publica]', error);
+    document.getElementById('lpubErro').style.display = 'block';
+    document.body.style.background = 'linear-gradient(150deg, #2A2438 0%, #1C2030 100%)';
+    return;
+  }
+
+  const cabecalho = rows[0];
+  const tema = TEMA_LISTA_PRESENTE[cabecalho.tipo] || TEMA_LISTA_PRESENTE.aniversario;
+  lpubTemaAtual = tema;
+
+  document.getElementById('listaPublicaScreen').style.background = tema.bgGradient;
+  document.body.style.background = tema.bgGradient;
+
+  const dataTxt = cabecalho.data_evento ? new Date(cabecalho.data_evento + 'T00:00:00').toLocaleDateString('pt-BR') : '';
+
+  const conteudo = document.getElementById('lpubConteudo');
+  conteudo.style.display = 'block';
+  conteudo.innerHTML = `
+    <div style="text-align:center;margin-bottom:6px;font-size:34px;">${tema.iconeTopo}</div>
+    <div style="text-align:center;font-size:11px;font-weight:700;color:${tema.corPrimaria};text-transform:uppercase;letter-spacing:0.18em;margin-bottom:10px;font-family:${tema.fonteCorpo}">
+      ${tema.label}
+    </div>
+    <div style="text-align:center;font-size:30px;${tema.tituloEstilo}color:${tema.corTexto};margin-bottom:6px;font-family:${tema.fonteTitulo}">
+      ${cabecalho.nome_titular}
+    </div>
+    <div style="text-align:center;font-size:13px;color:${tema.corTextoSuave};margin-bottom:22px;font-family:${tema.fonteCorpo}">
+      ${cabecalho.loja_nome}${dataTxt ? ' · ' + dataTxt : ''}
+    </div>
+    <div style="background:${tema.linkBg};border:1px solid ${tema.divisor};border-radius:12px;padding:12px 16px;margin-bottom:26px;text-align:center;font-size:12px;color:${tema.corTextoSuave};font-family:${tema.fonteCorpo}">
+      Escolha um item e reserve com seu nome e telefone. Sua identidade fica visível só para a loja.
+    </div>
+    <div id="lpubItensGrid"></div>
+  `;
+
+  renderizarItensListaPublica(rows, tema);
+}
+
+function renderizarItensListaPublica(rows, tema) {
+  const grid = document.getElementById('lpubItensGrid');
+  grid.innerHTML = '';
+
+  rows.forEach(it => {
+    const disponivel = it.quantidade_disponivel > 0;
+    const row = document.createElement('div');
+    row.className = 'lpub-item' + (disponivel ? '' : ' indisponivel');
+    row.style.cssText = `background:${tema.cardBg};border:1px solid ${tema.cardBorda};`;
+    row.innerHTML = `
+      ${it.foto_url
+        ? `<img src="${it.foto_url}" style="width:60px;height:60px;object-fit:cover;border-radius:10px;flex-shrink:0;">`
+        : `<div style="width:60px;height:60px;border-radius:10px;background:${tema.linkBg};border:1px solid ${tema.cardBorda};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:24px;">${tema.iconeItem}</div>`}
+      <div style="flex:1;min-width:0;font-family:${tema.fonteCorpo}">
+        <div style="font-size:14px;font-weight:600;color:${tema.corTexto};">${it.produto_nome}</div>
+        <div style="font-size:11px;color:${tema.corTextoSuave};margin-top:2px;">${it.produto_marca ? it.produto_marca + ' · ' : ''}${fmt(it.preco_unitario)}</div>
+      </div>
+      ${disponivel
+        ? `<button class="lpub-btn-reservar" style="background:${tema.corPrimaria};color:#fff;" onclick="abrirModalReservaLista('${it.item_id}', ${JSON.stringify(it.produto_nome)})">Reservar${it.quantidade_disponivel > 1 ? ' (' + it.quantidade_disponivel + ')' : ''}</button>`
+        : `<span style="font-size:11.5px;font-weight:700;color:${tema.corTextoSuave};flex-shrink:0;">Já reservado</span>`}
+    `;
+    grid.appendChild(row);
+  });
+}
+
+function abrirModalReservaLista(itemId, nomeProduto) {
+  lpubItemSelecionadoId = itemId;
+  document.getElementById('lpubModalItemNome').textContent = nomeProduto;
+  document.getElementById('lpubReservaNome').value = '';
+  document.getElementById('lpubReservaTelefone').value = '';
+  document.getElementById('lpubReservaErro').style.display = 'none';
+  const btn = document.getElementById('lpubBtnConfirmarReserva');
+  btn.disabled = false;
+  btn.textContent = 'Confirmar reserva';
+  if (lpubTemaAtual) btn.style.background = lpubTemaAtual.corPrimaria;
+  document.getElementById('lpubModalReserva').classList.add('show');
+}
+
+function fecharModalReservaLista() {
+  document.getElementById('lpubModalReserva').classList.remove('show');
+  lpubItemSelecionadoId = null;
+}
+
+async function confirmarReservaLista() {
+  const nome = document.getElementById('lpubReservaNome').value.trim();
+  const telefone = document.getElementById('lpubReservaTelefone').value.trim();
+  const erroEl = document.getElementById('lpubReservaErro');
+  erroEl.style.display = 'none';
+
+  if (!nome || !telefone) {
+    erroEl.textContent = 'Preencha nome e telefone para confirmar.';
+    erroEl.style.display = 'block';
+    return;
+  }
+
+  const btn = document.getElementById('lpubBtnConfirmarReserva');
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+
+  const { error } = await sb.rpc('fn_criar_reserva', {
+    p_item_id: lpubItemSelecionadoId, p_nome: nome, p_telefone: telefone
+  });
+
+  if (error) {
+    console.error('[fn_criar_reserva]', error);
+    erroEl.textContent = error.message || 'Não foi possível reservar este item. Tente novamente.';
+    erroEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Confirmar reserva';
+    return;
+  }
+
+  fecharModalReservaLista();
+  showToast('Reserva confirmada! Obrigado ' + (lpubTemaAtual?.iconeTopo || '🎁'), 'success');
+  await carregarConteudoListaPublica(); // recarrega pra atualizar disponibilidade pros outros convidados
+}
+
 // Gera um PDF da lista com visual temático conforme o tipo de evento
 // (casamento ou aniversário) — cabeçalho + itens com foto/nome/marca/preço/
 // qtd. Monta um div fora da tela, tira um "print" com html2canvas e recorta
@@ -9928,6 +10120,17 @@ function pararLeitorCodigoBarrasLista() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+
+  // ── Página pública da lista de presente (convidados, sem login) ──────────
+  // Se a URL tiver ?lista=SLUG, mostra SÓ essa view e para por aqui — nunca
+  // chega a inicializar o dashboard nem checar sessão/login.
+  const lpubSlugUrl = new URLSearchParams(window.location.search).get('lista');
+  if (lpubSlugUrl) {
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('listaPublicaScreen').style.display = 'block';
+    await iniciarPaginaPublicaLista(lpubSlugUrl);
+    return;
+  }
 
   // ── Restaura preferência de "Lembrar-me" e e-mail digitado (caso a página
   // tenha recarregado por causa de uma troca de preferência em fazerLogin) ──
