@@ -10024,6 +10024,25 @@ async function gerarPdfListaPresente() {
   if (error) { console.error('[lista_itens select pdf]', error); showToast('Erro ao carregar itens da lista.', 'error'); return; }
   if (!itens.length) { showToast('Adicione itens à lista antes de gerar o PDF.', 'error'); return; }
 
+  // Mesmo cálculo de renderItensListaAtual: quantos de cada item já foram
+  // reservados (válidos, não expirados) e quantos já foram comprados.
+  const { data: reservasPdf, error: errReservasPdf } = await sb
+    .from('lista_item_reservas')
+    .select('item_id, status, expira_em')
+    .in('item_id', itens.map(it => it.id));
+  if (errReservasPdf) console.error('[lista_item_reservas select pdf]', errReservasPdf);
+
+  const agoraPdf = new Date();
+  const contagemPdfPorItem = {};
+  (reservasPdf || []).forEach(r => {
+    if (!contagemPdfPorItem[r.item_id]) contagemPdfPorItem[r.item_id] = { reservada: 0, comprada: 0 };
+    if (r.status === 'comprado') {
+      contagemPdfPorItem[r.item_id].comprada++;
+    } else if (r.status === 'reservado' && new Date(r.expira_em) >= agoraPdf) {
+      contagemPdfPorItem[r.item_id].reservada++;
+    }
+  });
+
   showToast('Gerando PDF...', '');
 
   try {
@@ -10072,6 +10091,7 @@ async function gerarPdfListaPresente() {
     `;
 
     itens.forEach(it => {
+      const c = contagemPdfPorItem[it.id] || { reservada: 0, comprada: 0 };
       const row = document.createElement('div');
       row.style.cssText = `display:flex;align-items:center;gap:14px;padding:13px 14px;margin-bottom:9px;background:${tema.cardBg};border:1px solid ${tema.cardBorda};border-radius:12px;`;
       row.innerHTML = `
@@ -10080,7 +10100,12 @@ async function gerarPdfListaPresente() {
           : `<div style="width:56px;height:56px;border-radius:10px;background:${tema.linkBg};border:1px solid ${tema.cardBorda};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px;">${tema.iconeItem}</div>`}
         <div style="flex:1;min-width:0;">
           <div style="font-size:14px;font-weight:600;color:${tema.corTexto};">${it.produto_nome}</div>
-          <div style="font-size:11px;color:${tema.corTextoSuave};margin-top:2px;">${it.produto_marca ? it.produto_marca + ' · ' : ''}Qtd. desejada: ${it.quantidade_desejada}</div>
+          <div style="font-size:11px;color:${tema.corTextoSuave};margin-top:2px;">${it.produto_marca ? it.produto_marca + ' · ' : ''}</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px;">
+            <span style="font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:99px;background:${tema.linkBg};color:${tema.corTextoSuave};border:1px solid ${tema.cardBorda};">Desejada: ${it.quantidade_desejada}</span>
+            ${c.reservada > 0 ? `<span style="font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:99px;background:rgba(37,99,235,0.15);color:#2563EB;">Reservada: ${c.reservada}</span>` : ''}
+            ${c.comprada > 0 ? `<span style="font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:99px;background:rgba(5,150,105,0.15);color:#059669;">Comprada: ${c.comprada}</span>` : ''}
+          </div>
         </div>
         <div style="font-size:15px;font-weight:700;flex-shrink:0;color:${tema.corPrimaria};">${fmt(it.preco_unitario)}</div>
       `;
