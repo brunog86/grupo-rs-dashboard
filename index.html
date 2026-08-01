@@ -1488,8 +1488,8 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
             </div>
           </div>
           <div style="display:flex;gap:8px;">
-            <button class="apply-btn" id="lpBtnGerarPDF" onclick="showToast('PDF da lista chega na Fase 3.', '')" style="border-color:var(--orange);color:var(--orange)">📄 Gerar PDF</button>
-            <button class="apply-btn" id="lpBtnLink" onclick="showToast('Link público chega na Fase 3.', '')" style="border-color:var(--blue2);color:var(--blue2)">🔗 Link público</button>
+            <button class="apply-btn" id="lpBtnGerarPDF" onclick="gerarPdfListaPresente()" style="border-color:var(--orange);color:var(--orange)">📄 Gerar PDF</button>
+            <button class="apply-btn" id="lpBtnLink" onclick="copiarLinkPublicoLista()" style="border-color:var(--blue2);color:var(--blue2)">🔗 Link público</button>
           </div>
         </div>
 
@@ -9661,6 +9661,175 @@ async function renderItensListaAtual() {
       </div>
       <button class="apply-btn" style="font-size:11px;padding:5px 10px;color:var(--red);border-color:var(--red)" onclick="removerItemListaPresente('${it.id}')">Remover</button>
     </div>`).join('');
+}
+
+// ── Fase 3: link público + PDF ──────────────────────────────────────────────
+// Convenção adotada nesta sessão: o deploy é um único index.html estático no
+// Vercel, sem rota própria configurada ainda (ver seção 3.2 do
+// plano_listas_presente.md, que sugeria algo como /lista/{slug}). Em vez de
+// depender de rewrites no Vercel, o link público usa query string na MESMA
+// página (?lista=SLUG). Quando a Fase 4 (página pública, sem login) for
+// implementada, ela precisa checar esse parâmetro logo no carregamento da
+// página — ANTES de exigir login — e renderizar a view pública em vez do
+// dashboard autenticado.
+function gerarLinkPublicoLista(slug) {
+  return `${window.location.origin}${window.location.pathname}?lista=${slug}`;
+}
+
+async function copiarLinkPublicoLista() {
+  if (!listaPresenteAbertaObj) { showToast('Abra uma lista primeiro.', 'error'); return; }
+  const url = gerarLinkPublicoLista(listaPresenteAbertaObj.link_slug);
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('Link copiado!', 'success');
+  } catch (e) {
+    console.error('[copiar link publico]', e);
+    // Fallback pra navegador/contexto sem permissão de clipboard (ex: sem HTTPS)
+    window.prompt('Copie o link manualmente:', url);
+  }
+}
+
+// Gera um PDF da lista (cabeçalho + itens com foto/nome/marca/preço/qtd) no
+// mesmo padrão visual usado em exportFornecedorPDF: monta um div fora da
+// tela, tira um "print" com html2canvas e recorta em páginas de A4.
+async function gerarPdfListaPresente() {
+  if (!listaPresenteAbertaObj) { showToast('Abra uma lista primeiro.', 'error'); return; }
+  const lista = listaPresenteAbertaObj;
+
+  const { data: itens, error } = await sb.from('lista_itens').select('*').eq('lista_id', listaPresenteAbertaId).order('criado_em');
+  if (error) { console.error('[lista_itens select pdf]', error); showToast('Erro ao carregar itens da lista.', 'error'); return; }
+  if (!itens.length) { showToast('Adicione itens à lista antes de gerar o PDF.', 'error'); return; }
+
+  showToast('Gerando PDF...', '');
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const tipoTxt = lista.tipo === 'casamento' ? 'Lista de Casamento' : 'Lista de Aniversário';
+    const dataTxt = lista.data_evento ? new Date(lista.data_evento + 'T00:00:00').toLocaleDateString('pt-BR') : 'sem data definida';
+    const lojaTxt = lista.lojas?.nome || '';
+    const linkUrl = gerarLinkPublicoLista(lista.link_slug);
+
+    const container = document.createElement('div');
+    container.style.cssText = `
+      position: fixed; left: -9999px; top: 0;
+      width: 720px; background: #141720;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      color: #F4F6FF; padding: 32px;
+    `;
+
+    container.innerHTML = `
+      <div style="margin-bottom:24px;">
+        <div style="font-size:11px;font-weight:700;color:#444B62;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;border-left:3px solid #F97316;padding-left:8px;">
+          ${tipoTxt}
+        </div>
+        <div style="font-size:26px;font-weight:800;letter-spacing:-0.03em;margin-bottom:4px;">${lista.nome_titular}</div>
+        <div style="font-size:12px;color:#7A8099;">${lojaTxt}${lojaTxt ? ' · ' : ''}${dataTxt}</div>
+      </div>
+      <div style="background:#1C2030;border-radius:10px;padding:16px 18px;margin-bottom:24px;">
+        <div style="font-size:10px;color:#7A8099;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;">Link para os convidados reservarem</div>
+        <div style="font-size:13px;font-weight:600;color:#60A5FA;word-break:break-all;">${linkUrl}</div>
+      </div>
+      <div id="lpPdfItens"></div>
+    `;
+    document.body.appendChild(container);
+
+    const itensEl = container.querySelector('#lpPdfItens');
+    itensEl.innerHTML = `
+      <div style="font-size:11px;font-weight:700;color:#444B62;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:14px;border-left:3px solid #F97316;padding-left:8px;">
+        Itens da lista — ${itens.length}
+      </div>
+    `;
+
+    itens.forEach(it => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.06);';
+      row.innerHTML = `
+        ${it.foto_url
+          ? `<img src="${it.foto_url}" crossorigin="anonymous" style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0;background:#1C2030;">`
+          : `<div style="width:56px;height:56px;border-radius:8px;background:#1C2030;flex-shrink:0;"></div>`}
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:600;">${it.produto_nome}</div>
+          <div style="font-size:11px;color:#7A8099;margin-top:2px;">${it.produto_marca ? it.produto_marca + ' · ' : ''}Qtd. desejada: ${it.quantidade_desejada}</div>
+        </div>
+        <div style="font-size:15px;font-weight:700;flex-shrink:0;">${fmt(it.preco_unitario)}</div>
+      `;
+      itensEl.appendChild(row);
+    });
+
+    // Espera as fotos carregarem antes do "print" (senão saem em branco no canvas)
+    const imgs = Array.from(container.querySelectorAll('img'));
+    await Promise.all(imgs.map(img => img.complete ? Promise.resolve() : new Promise(res => { img.onload = res; img.onerror = res; })));
+    await new Promise(r => setTimeout(r, 200));
+
+    const canvas = await html2canvas(container, {
+      backgroundColor: '#141720',
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      width: 720,
+      height: container.scrollHeight
+    });
+
+    document.body.removeChild(container);
+
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const margin = 12;
+    const usableW = pageW - margin * 2;
+    const imgH = (canvas.height / canvas.width) * usableW;
+
+    pdf.setFillColor(14, 17, 24);
+    pdf.rect(0, 0, pageW, 20, 'F');
+    pdf.setFillColor(249, 115, 22);
+    pdf.rect(0, 20, pageW, 1, 'F');
+    pdf.setFontSize(12);
+    pdf.setTextColor(244, 246, 255);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Grupo RS', margin, 13);
+    pdf.setFontSize(9);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setTextColor(122, 128, 153);
+    pdf.text('Lista de Presente', margin + 40, 13);
+    pdf.text(new Date().toLocaleDateString('pt-BR', { dateStyle: 'long' }), pageW - margin, 13, { align: 'right' });
+
+    let yPos = 24;
+    let remaining = imgH;
+    let srcY = 0;
+
+    while (remaining > 0) {
+      const sliceH = Math.min(remaining, pageH - yPos - margin);
+      const sliceRatio = sliceH / imgH;
+      const srcSliceH = canvas.height * sliceRatio;
+      const sliceCanvas = document.createElement('canvas');
+      sliceCanvas.width = canvas.width;
+      sliceCanvas.height = Math.ceil(srcSliceH);
+      const ctx2 = sliceCanvas.getContext('2d');
+      ctx2.fillStyle = '#141720';
+      ctx2.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+      ctx2.drawImage(canvas, 0, srcY, canvas.width, srcSliceH, 0, 0, canvas.width, srcSliceH);
+      pdf.addImage(sliceCanvas.toDataURL('image/png'), 'PNG', margin, yPos, usableW, sliceH);
+      remaining -= sliceH;
+      srcY += srcSliceH;
+      if (remaining > 0) { pdf.addPage(); yPos = margin; }
+    }
+
+    const totalPages = pdf.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      pdf.setPage(i);
+      pdf.setFontSize(8);
+      pdf.setTextColor(68, 75, 98);
+      pdf.text(`Página ${i} de ${totalPages}`, pageW / 2, pageH - 5, { align: 'center' });
+    }
+
+    const filename = `Lista_${lista.nome_titular.replace(/\s+/g,'_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+    pdf.save(filename);
+    showToast('PDF gerado!', 'success');
+
+  } catch (e) {
+    console.error('[gerarPdfListaPresente]', e);
+    showToast('Erro ao gerar o PDF da lista.', 'error');
+  }
 }
 
 async function removerItemListaPresente(itemId) {
