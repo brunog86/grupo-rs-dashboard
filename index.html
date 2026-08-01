@@ -9706,6 +9706,27 @@ function previewFotoItemLista(event) {
   preview.style.display = 'block';
 }
 
+// Tenta `fnAsync` (que deve retornar algo no formato {data, error} igual
+// ao cliente do Supabase) de novo automaticamente se der erro, com uma
+// pequena espera entre tentativas. Corrige um bug reportado no celular: ao
+// tirar foto pela câmera nativa (capture="environment"), o navegador
+// suspende a aba enquanto o app da câmera está aberto — a PRIMEIRA
+// requisição de rede depois de voltar (upload da foto, ou o insert do
+// item) às vezes falha por causa disso, e funciona normal na tentativa
+// seguinte. Em vez de obrigar o vendedor a clicar duas vezes, tenta de
+// novo sozinho.
+async function chamarComRetryLp(fnAsync, tentativas = 3, esperaMs = 700) {
+  let ultimoResultado = null;
+  for (let i = 1; i <= tentativas; i++) {
+    const resultado = await fnAsync();
+    if (!resultado.error) return resultado;
+    ultimoResultado = resultado;
+    console.error(`[retry ${i}/${tentativas}]`, resultado.error);
+    if (i < tentativas) await new Promise(r => setTimeout(r, esperaMs * i));
+  }
+  return ultimoResultado;
+}
+
 async function confirmarAdicionarItemLista() {
   const barras = document.getElementById('lpItemBarras').value.trim();
   const nome   = document.getElementById('lpItemNome').value.trim();
@@ -9722,13 +9743,15 @@ async function confirmarAdicionarItemLista() {
     showToast('Enviando foto...', '');
     const ext = (lpFotoAtual.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
     const caminho = `${listaPresenteAbertaId}/${Date.now()}.${ext}`;
-    const { error: erroUpload } = await sb.storage.from('listas-presente-fotos').upload(caminho, lpFotoAtual, { upsert: false });
-    if (erroUpload) { console.error('[foto upload]', erroUpload); showToast('Erro ao enviar a foto.', 'error'); return; }
+    const { error: erroUpload } = await chamarComRetryLp(() =>
+      sb.storage.from('listas-presente-fotos').upload(caminho, lpFotoAtual, { upsert: false })
+    );
+    if (erroUpload) { console.error('[foto upload]', erroUpload); showToast('Erro ao enviar a foto. Tente novamente.', 'error'); return; }
     const { data: pub } = sb.storage.from('listas-presente-fotos').getPublicUrl(caminho);
     fotoUrl = pub.publicUrl;
   }
 
-  const { error } = await sb.from('lista_itens').insert({
+  const { error } = await chamarComRetryLp(() => sb.from('lista_itens').insert({
     lista_id: listaPresenteAbertaId,
     produto_barras: barras || null,
     produto_nome: nome,
@@ -9736,9 +9759,9 @@ async function confirmarAdicionarItemLista() {
     preco_unitario: preco,
     quantidade_desejada: qtd,
     foto_url: fotoUrl
-  });
+  }));
 
-  if (error) { console.error('[lista_itens insert]', error); showToast('Erro ao adicionar o item.', 'error'); return; }
+  if (error) { console.error('[lista_itens insert]', error); showToast('Erro ao adicionar o item. Tente novamente.', 'error'); return; }
 
   showToast('Item adicionado à lista!', 'success');
   resetFormularioItemLista();
@@ -9873,15 +9896,47 @@ function gerarLinkPublicoLista(slug) {
   return `${window.location.origin}${window.location.pathname}?lista=${slug}`;
 }
 
+// Copia texto pra área de transferência com fallback — a Clipboard API
+// moderna (navigator.clipboard.writeText) sozinha não é confiável em todo
+// navegador mobile (bug reportado: funcionava no computador mas não no
+// celular). O fallback com textarea temporário + execCommand('copy') é mais
+// antigo mas muito mais compatível em navegadores mobile restritivos.
+async function copiarTextoParaAreaDeTransferencia(texto) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(texto);
+      return true;
+    } catch (e) {
+      console.error('[clipboard writeText]', e);
+    }
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = texto;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    textarea.setAttribute('readonly', '');
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, texto.length); // necessário em alguns navegadores mobile (iOS)
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    if (ok) return true;
+  } catch (e) {
+    console.error('[execCommand copy]', e);
+  }
+  return false;
+}
+
 async function copiarLinkPublicoLista() {
   if (!listaPresenteAbertaObj) { showToast('Abra uma lista primeiro.', 'error'); return; }
   const url = gerarLinkPublicoLista(listaPresenteAbertaObj.link_slug);
-  try {
-    await navigator.clipboard.writeText(url);
+  const copiou = await copiarTextoParaAreaDeTransferencia(url);
+  if (copiou) {
     showToast('Link copiado!', 'success');
-  } catch (e) {
-    console.error('[copiar link publico]', e);
-    // Fallback pra navegador/contexto sem permissão de clipboard (ex: sem HTTPS)
+  } else {
     window.prompt('Copie o link manualmente:', url);
   }
 }
@@ -10186,6 +10241,7 @@ async function gerarPdfListaPresente() {
     const dataTxt = lista.data_evento ? new Date(lista.data_evento + 'T00:00:00').toLocaleDateString('pt-BR') : 'sem data definida';
     const lojaTxt = lista.lojas?.nome || '';
     const linkUrl = gerarLinkPublicoLista(lista.link_slug);
+    const logoLoja = LOGOS_LOJA[lojaTxt] || null;
 
     const container = document.createElement('div');
     container.style.cssText = `
@@ -10197,9 +10253,15 @@ async function gerarPdfListaPresente() {
     `;
 
     container.innerHTML = `
+      ${logoLoja ? `
+      <div style="text-align:left;margin-bottom:14px;">
+        <img src="${logoLoja}" style="max-width:220px;max-height:90px;object-fit:contain;">
+      </div>
+      ` : `
       <div style="text-align:right;font-size:9px;color:${tema.corTextoSuave};letter-spacing:0.08em;margin-bottom:18px;">
         GRUPO RS ${lojaTxt ? '· ' + lojaTxt.toUpperCase() : ''}
       </div>
+      `}
       <div style="text-align:center;margin-bottom:8px;font-size:30px;">${tema.iconeTopo}</div>
       <div style="text-align:center;font-size:11px;font-weight:700;color:${tema.corPrimaria};text-transform:uppercase;letter-spacing:0.18em;margin-bottom:10px;">
         ${tema.label}
