@@ -9852,6 +9852,19 @@ async function carregarConteudoListaPublica() {
   renderizarItensListaPublica(rows, tema);
 }
 
+// Escapa texto pra uso seguro dentro de innerHTML E dentro de atributos
+// (nome de produto pode ter aspas, apóstrofo, "&" etc. — a serialização
+// via textContent/innerHTML do navegador NÃO escapa aspas retas, então
+// isso é feito manualmente aqui pra também ser seguro em data-item-nome="...").
+function escapeHtmlLpub(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function renderizarItensListaPublica(rows, tema) {
   const grid = document.getElementById('lpubItensGrid');
   grid.innerHTML = '';
@@ -9866,14 +9879,24 @@ function renderizarItensListaPublica(rows, tema) {
         ? `<img src="${it.foto_url}" style="width:60px;height:60px;object-fit:cover;border-radius:10px;flex-shrink:0;">`
         : `<div style="width:60px;height:60px;border-radius:10px;background:${tema.linkBg};border:1px solid ${tema.cardBorda};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:24px;">${tema.iconeItem}</div>`}
       <div style="flex:1;min-width:0;font-family:${tema.fonteCorpo}">
-        <div style="font-size:14px;font-weight:600;color:${tema.corTexto};">${it.produto_nome}</div>
-        <div style="font-size:11px;color:${tema.corTextoSuave};margin-top:2px;">${it.produto_marca ? it.produto_marca + ' · ' : ''}${fmt(it.preco_unitario)}</div>
+        <div style="font-size:14px;font-weight:600;color:${tema.corTexto};">${escapeHtmlLpub(it.produto_nome)}</div>
+        <div style="font-size:11px;color:${tema.corTextoSuave};margin-top:2px;">${it.produto_marca ? escapeHtmlLpub(it.produto_marca) + ' · ' : ''}${fmt(it.preco_unitario)}</div>
       </div>
       ${disponivel
-        ? `<button class="lpub-btn-reservar" style="background:${tema.corPrimaria};color:#fff;" onclick="abrirModalReservaLista('${it.item_id}', ${JSON.stringify(it.produto_nome)})">Reservar${it.quantidade_disponivel > 1 ? ' (' + it.quantidade_disponivel + ')' : ''}</button>`
+        ? `<button type="button" class="lpub-btn-reservar" style="background:${tema.corPrimaria};color:#fff;" data-item-id="${it.item_id}" data-item-nome="${escapeHtmlLpub(it.produto_nome)}">Reservar${it.quantidade_disponivel > 1 ? ' (' + it.quantidade_disponivel + ')' : ''}</button>`
         : `<span style="font-size:11.5px;font-weight:700;color:${tema.corTextoSuave};flex-shrink:0;">Já reservado</span>`}
     `;
     grid.appendChild(row);
+  });
+
+  // Listeners via data-attribute em vez de onclick inline — evita quebrar o
+  // HTML quando o nome do produto tem aspas/apóstrofo (bug corrigido nesta
+  // sessão: onclick inline com JSON.stringify(produto_nome) fechava a
+  // aspa do próprio atributo onclick e o clique parava de funcionar).
+  grid.querySelectorAll('.lpub-btn-reservar').forEach(btn => {
+    btn.addEventListener('click', () => {
+      abrirModalReservaLista(btn.dataset.itemId, btn.dataset.itemNome);
+    });
   });
 }
 
