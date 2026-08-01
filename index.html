@@ -10006,13 +10006,19 @@ async function carregarConteudoListaPublica() {
   conteudo.style.display = 'block';
   conteudo.innerHTML = `
     ${logoLoja ? `
-    <div style="text-align:left;margin-bottom:10px;">
-      <img src="${logoLoja}" style="max-width:150px;max-height:60px;object-fit:contain;display:inline-block;">
-    </div>` : ''}
+    <div style="display:flex;align-items:flex-end;justify-content:center;gap:18px;margin-bottom:16px;">
+      <img src="${logoLoja}" style="max-width:220px;max-height:88px;object-fit:contain;">
+      <div style="text-align:left;">
+        <div style="font-size:40px;line-height:1;margin-bottom:4px;">${tema.iconeTopo}</div>
+        <div style="font-size:13px;font-weight:700;color:${tema.corPrimaria};text-transform:uppercase;letter-spacing:0.16em;font-family:${tema.fonteCorpo};white-space:nowrap;">${tema.label}</div>
+      </div>
+    </div>
+    ` : `
     <div style="text-align:center;margin-bottom:6px;font-size:32px;">${tema.iconeTopo}</div>
     <div style="text-align:center;font-size:11px;font-weight:700;color:${tema.corPrimaria};text-transform:uppercase;letter-spacing:0.18em;margin-bottom:10px;font-family:${tema.fonteCorpo}">
       ${tema.label}
     </div>
+    `}
     <div style="text-align:center;font-size:32px;${tema.tituloEstilo}color:${tema.corTexto};margin-bottom:8px;font-family:${tema.fonteTitulo}">
       ${cabecalho.nome_titular}
     </div>
