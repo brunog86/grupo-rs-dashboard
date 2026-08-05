@@ -835,6 +835,9 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
               <button class="apply-btn" onclick="exportFornecedorPDF()" style="border-color:var(--blue2);color:var(--blue2);display:flex;align-items:center;gap:6px;">
                 ↓ PDF Fornecedor
               </button>
+              <button class="apply-btn" onclick="exportMarcaExcel()" style="border-color:var(--green);color:var(--green);display:flex;align-items:center;gap:6px;">
+                ↓ Excel
+              </button>
               <button class="apply-btn" onclick="document.getElementById('prodMarcaFilter').value='';renderProdutosMarcaLeve()">✕ Fechar</button>
             </div>
           </div>
@@ -5532,6 +5535,7 @@ let prodRankingExpanded = false;
 let marcaRankingExpanded = false;
 let lastSortedProd = [];
 let lastSortedMarca = [];
+let lastSortedProdPorMarca = [];
 // Guarda a última lista renderizada no Detalhamento (Contas a Pagar/Receber),
 // já filtrada por período/loja/status/fornecedor — usada pelos exports de
 // PDF e Excel, que devem refletir exatamente o que está na tela no momento.
@@ -5561,8 +5565,8 @@ function buildRankingRows(container, sorted, maxVal, limit, showQtyLabel, sortBy
       ? `${fmtNum(d.qty)} un · fat. ${fmt(d.fat)}`
       : `${fmtNum(d.qty)} un · preço médio ${fmt(ticket)}`;
     const mainFmt = sortBy === 'qty' ? `${fmtNum(d.qty)} un` : fmt(d.fat);
-    const label = d.marca ? `<div class="rank-loja">${d.marca}</div>` : '';
     const barras = d.barras || '';
+    const label = d.marca ? `<div class="rank-loja">${d.marca}${barras ? ' - ' + barras : ''}</div>` : '';
     const displayName = name.length > 40 ? name.substring(0, 39) + '…' : name;
 
     const wrapper = document.createElement('div');
@@ -5775,6 +5779,7 @@ async function renderProdutosMarcaLeve() {
   sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   const sorted = produtos.map(p => [p.produto, { fat: p.fat, qty: p.qty, marca: p.marca, barras: p.barras }]);
+  lastSortedProdPorMarca = sorted;
   const maxFat = sorted[0]?.[1].fat || 1;
   buildRankingRows(document.getElementById('prodPorMarcaList'), sorted, maxFat, 0, true);
 }
@@ -6551,6 +6556,58 @@ function renderEstoqueTabela(produtos) {
     `;
     listEl.appendChild(row);
   });
+}
+
+// Exporta em Excel a lista de produtos do painel "Produtos por marca" (o
+// mesmo que abre ao filtrar por marca na aba Produtos & Marcas), incluindo
+// o código de barras de cada produto — pedido nesta sessão, junto com a
+// exibição do código de barras ao lado da marca na tela.
+function exportMarcaExcel() {
+  const marca = document.getElementById('prodPorMarcaTitulo').textContent;
+  const stats = document.getElementById('prodPorMarcaStats').textContent;
+  const sorted = lastSortedProdPorMarca;
+
+  if (!sorted || !sorted.length) { showToast('Nenhum dado para exportar.', 'error'); return; }
+
+  const lojaFil = document.getElementById('prodLojaFilter')?.value || '';
+  const { dataInicio, dataFim } = getProdPeriodoAtivo();
+  const fmtData = d => d.split('-').reverse().join('/');
+  const subtitulo = `${lojaFil ? 'Loja: ' + lojaFil : 'Todas as lojas'} · Período: ${fmtData(dataInicio)} até ${fmtData(dataFim)}`;
+
+  const linhas = [
+    [`Produtos — ${marca}`],
+    [stats],
+    [subtitulo],
+    [],
+    ['#', 'Produto', 'Marca', 'Código de Barras', 'Quantidade', 'Faturamento (R$)', 'Preço Médio (R$)']
+  ];
+
+  sorted.forEach(([nome, d], i) => {
+    linhas.push([
+      i + 1,
+      nome,
+      d.marca || 'SEM IDENTIF',
+      d.barras || '',
+      d.qty,
+      Number((d.fat || 0).toFixed(2)),
+      Number((d.qty > 0 ? d.fat / d.qty : 0).toFixed(2))
+    ]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(linhas);
+  ws['!cols'] = [{ wch: 5 }, { wch: 48 }, { wch: 18 }, { wch: 18 }, { wch: 12 }, { wch: 16 }, { wch: 16 }];
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: 6 } }
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, marca.substring(0, 31) || 'Marca');
+
+  const hoje = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(wb, `produtos-${marca.replace(/\s+/g, '_')}-${hoje}.xlsx`);
+  showToast('Excel gerado!', '');
 }
 
 async function exportFornecedorPDF() {
