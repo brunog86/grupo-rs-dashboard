@@ -650,6 +650,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
     <button class="tab" id="tabBtnAnalise" onclick="switchTab('analise', this)">🔍 Análise</button>
     <button class="tab" id="tabBtnEvolucao" onclick="switchTab('evolucao', this)">📈 Evolução</button>
     <button class="tab" id="tabBtnListasPresente" onclick="switchTab('listaspresente', this)">🎁 Listas de Presente</button>
+    <button class="tab" id="tabBtnAniversariantes" onclick="switchTab('aniversariantes', this)">🎂 Aniversariantes</button>
     <button class="tab" id="tabBtnConfig" onclick="switchTab('config', this)" style="display:none">⚙ Configurações</button>
   </div>
 
@@ -1630,6 +1631,51 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 
     </div>
 
+    <!-- ANIVERSARIANTES -->
+    <div class="tab-content" id="tab-aniversariantes">
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px;margin-bottom:24px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end;">
+          <div>
+            <div class="filter-label" style="margin-bottom:6px">Loja</div>
+            <select class="date-input" id="aniverLojaFilter" style="width:100%" onchange="renderAniversariantesLeve()">
+              <option value="">Todas as lojas</option>
+            </select>
+          </div>
+          <div>
+            <div class="filter-label" style="margin-bottom:6px">Mês</div>
+            <select class="date-input" id="aniverMesFilter" style="width:100%" onchange="renderAniversariantesLeve()">
+              <option value="">Todos os meses</option>
+              <option value="1">Janeiro</option>
+              <option value="2">Fevereiro</option>
+              <option value="3">Março</option>
+              <option value="4">Abril</option>
+              <option value="5">Maio</option>
+              <option value="6">Junho</option>
+              <option value="7">Julho</option>
+              <option value="8">Agosto</option>
+              <option value="9">Setembro</option>
+              <option value="10">Outubro</option>
+              <option value="11">Novembro</option>
+              <option value="12">Dezembro</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div id="aniverEmpty" class="empty" style="display:none">
+        <div class="empty-icon">🎂</div>
+        <div style="font-size:15px;font-weight:500;margin-bottom:8px;color:var(--text)">Nenhum funcionário encontrado</div>
+        <div style="font-size:13px;color:var(--text2);max-width:440px;margin:0 auto;line-height:1.6">
+          Verifique se o sincronismo de funcionários (sync_aniversariantes_todas.py) já rodou pra essa loja.
+        </div>
+      </div>
+
+      <div class="section-title">Próximos aniversários</div>
+      <div id="aniverGrid" class="lojas-grid" style="margin-bottom:8px;"></div>
+
+    </div>
+
     <!-- CONFIGURAÇÕES (somente admin) -->
     <div class="tab-content" id="tab-config">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
@@ -2000,6 +2046,7 @@ const ABAS_CONTROLAVEIS = [
   { id: 'analise',    nome: '🔍 Análise',               idBtn: 'tabBtnAnalise' },
   { id: 'evolucao',   nome: '📈 Evolução',              idBtn: 'tabBtnEvolucao' },
   { id: 'listaspresente', nome: '🎁 Listas de Presente', idBtn: 'tabBtnListasPresente' },
+  { id: 'aniversariantes', nome: '🎂 Aniversariantes',   idBtn: 'tabBtnAniversariantes' },
 ];
 
 function toggleLojasField() {
@@ -3952,7 +3999,7 @@ async function initDashboardLeve() {
     assignLojaColorsFromCadastro();
 
     const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
-    ['prodLojaFilter', 'vendLojaFilter', 'pgtoLojaFilter', 'finPagarLojaFilter', 'finReceberLojaFilter', 'analiseLojaFilter', 'evolLojaFilter']
+    ['prodLojaFilter', 'vendLojaFilter', 'pgtoLojaFilter', 'finPagarLojaFilter', 'finReceberLojaFilter', 'analiseLojaFilter', 'evolLojaFilter', 'aniverLojaFilter']
       .forEach(id => {
         const sel = document.getElementById(id);
         if (sel) sel.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
@@ -9551,7 +9598,96 @@ function switchTab(name, btn) {
   if (name === 'fatmeta')     renderFatMeta();
   if (name === 'finexec')     renderFinExecLeve();
   if (name === 'listaspresente') renderListasPresenteLeve();
+  if (name === 'aniversariantes') renderAniversariantesLeve();
   if (name === 'config')      carregarListaUsuarios();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ANIVERSARIANTES — funcionários cadastrados como FORNECEDOR/FUNCIONARIO no
+// C8, sincronizados pelo sync_aniversariantes_todas.py na tabela
+// `funcionarios`. DT_CADASTRO do Firebird é usado como data_nascimento
+// (não existe campo de nascimento real no C8 — combinado com o usuário).
+// ════════════════════════════════════════════════════════════════════════════
+
+let funcionariosAniverCache = [];
+
+// Dias (cíclico, ignora o ano) até o próximo aniversário a partir de hoje.
+function diasAteProximoAniversario(dataNascStr) {
+  if (!dataNascStr) return Infinity;
+  const nasc = new Date(dataNascStr + 'T00:00:00');
+  if (isNaN(nasc.getTime())) return Infinity;
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  let prox = new Date(hoje.getFullYear(), nasc.getMonth(), nasc.getDate());
+  if (prox < hoje) prox = new Date(hoje.getFullYear() + 1, nasc.getMonth(), nasc.getDate());
+  return Math.round((prox - hoje) / 86400000);
+}
+
+function calcularIdadeCompletar(dataNascStr) {
+  if (!dataNascStr) return null;
+  const nasc = new Date(dataNascStr + 'T00:00:00');
+  if (isNaN(nasc.getTime())) return null;
+  const hoje = new Date();
+  let idade = hoje.getFullYear() - nasc.getFullYear();
+  const aindaNaoFezAno = (hoje.getMonth() < nasc.getMonth()) ||
+    (hoje.getMonth() === nasc.getMonth() && hoje.getDate() < nasc.getDate());
+  if (aindaNaoFezAno) idade -= 1;
+  return idade + 1; // idade que vai completar no próximo aniversário
+}
+
+async function renderAniversariantesLeve() {
+  const grid = document.getElementById('aniverGrid');
+  const empty = document.getElementById('aniverEmpty');
+
+  const { data, error } = await sb.from('funcionarios').select('*, lojas(nome)');
+
+  if (error) { console.error('[funcionarios]', error); showToast('Erro ao carregar funcionários.', 'error'); return; }
+
+  funcionariosAniverCache = data || [];
+
+  const lojaFil = document.getElementById('aniverLojaFilter')?.value || '';
+  const mesFil = document.getElementById('aniverMesFilter')?.value || '';
+
+  let lista = funcionariosAniverCache.filter(f => f.data_nascimento);
+  if (lojaFil) lista = lista.filter(f => f.lojas?.nome === lojaFil);
+  if (mesFil) lista = lista.filter(f => {
+    const d = new Date(f.data_nascimento + 'T00:00:00');
+    return (d.getMonth() + 1) === Number(mesFil);
+  });
+
+  lista.sort((a, b) => diasAteProximoAniversario(a.data_nascimento) - diasAteProximoAniversario(b.data_nascimento));
+
+  if (!lista.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  grid.innerHTML = lista.map(f => {
+    const dias = diasAteProximoAniversario(f.data_nascimento);
+    const d = new Date(f.data_nascimento + 'T00:00:00');
+    const dataTxt = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    const idade = calcularIdadeCompletar(f.data_nascimento);
+    let badgeTxt, badgeCor;
+    if (dias === 0) { badgeTxt = '🎉 Hoje!'; badgeCor = 'var(--orange)'; }
+    else if (dias === 1) { badgeTxt = 'Amanhã'; badgeCor = 'var(--orange)'; }
+    else if (dias <= 7) { badgeTxt = `Em ${dias} dias`; badgeCor = 'var(--blue2)'; }
+    else { badgeTxt = `Em ${dias} dias`; badgeCor = 'var(--text2)'; }
+    const corBorda = dias <= 7 ? 'var(--orange)' : 'transparent';
+    return `
+      <div class="loja-row" style="grid-template-columns:1fr auto auto;border-left-color:${corBorda}">
+        <div>
+          <div class="loja-name">🎂 ${escapeHtmlLpub(f.nome)}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px">${escapeHtmlLpub(f.lojas?.nome || '—')}</div>
+        </div>
+        <div style="text-align:right;font-size:14px;font-weight:700;color:var(--text)">
+          ${dataTxt}${idade !== null ? `<div style="font-size:11px;font-weight:500;color:var(--text2)">completa ${idade} anos</div>` : ''}
+        </div>
+        <div style="text-align:right;font-size:12.5px;font-weight:700;color:${badgeCor}">${badgeTxt}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 // ════════════════════════════════════════════════════════════════════════════
