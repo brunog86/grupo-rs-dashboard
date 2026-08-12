@@ -5107,7 +5107,8 @@ async function buscarListaFinanceiro(tipo, opts = {}) {
   return rows.map(r => ({
     loja: r.loja_nome, emissao: r.emissao, situacao: r.situacao, categoria: r.categoria,
     dtVenc: r.dt_vencimento, dtQuit: r.dt_quitacao, valorDoc: parseFloat(r.valor_doc),
-    valorQuit: parseFloat(r.valor_quit), historico: r.historico, fornecedor: r.fornecedor
+    valorQuit: parseFloat(r.valor_quit), historico: r.historico, fornecedor: r.fornecedor,
+    numeroDocumento: r.numero_documento, tipoDocumento: r.tipo_documento
   }));
 }
 
@@ -7536,6 +7537,10 @@ function buildFinListGeneric(data, listId, corAberto, hoje) {
           <div style="font-size:11px;color:var(--text2);margin-top:2px">
             ${r.categoria || ''}${r.historico && r.fornecedor ? ' · '+r.historico : ''}${r.loja ? ' · '+r.loja : ''}
           </div>
+          ${(r.numeroDocumento || r.tipoDocumento) ? `<div style="font-size:10px;color:var(--text3);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap">
+            ${r.numeroDocumento ? `<span>Nro Doc: <strong style="color:var(--text2);font-weight:700">${escapeHtmlLpub(String(r.numeroDocumento))}</strong></span>` : ''}
+            ${r.tipoDocumento ? `<span>Tipo: <strong style="color:var(--text2);font-weight:700">${escapeHtmlLpub(String(r.tipoDocumento))}</strong></span>` : ''}
+          </div>` : ''}
         </div>
         <div style="text-align:right;flex-shrink:0;margin-left:12px">
           <div style="font-size:13px;font-weight:700;color:${cor}">${fmt(r.valorDoc)}</div>
@@ -7599,11 +7604,13 @@ function exportFinExcel(tipo) {
     [titulo],
     [subtitulo],
     [],
-    ['Vencimento', 'Fornecedor', 'Categoria', 'Observação', 'Loja', 'Situação', 'Valor (R$)']
+    ['Vencimento', 'Nro Doc', 'Tipo', 'Fornecedor', 'Categoria', 'Observação', 'Loja', 'Situação', 'Valor (R$)']
   ];
   ordenados.forEach(r => {
     linhas.push([
       fmtData(r.dtVenc || r.emissao),
+      r.numeroDocumento || '',
+      r.tipoDocumento || '',
       r.fornecedor || '—',
       r.categoria || '',
       r.historico || '',
@@ -7614,13 +7621,13 @@ function exportFinExcel(tipo) {
   });
   const totalGeral = ordenados.reduce((s, r) => s + (r.valorDoc || 0), 0);
   linhas.push([]);
-  linhas.push(['', '', '', '', '', 'Total', Number(totalGeral.toFixed(2))]);
+  linhas.push(['', '', '', '', '', '', '', 'Total', Number(totalGeral.toFixed(2))]);
 
   const ws = XLSX.utils.aoa_to_sheet(linhas);
-  ws['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 20 }, { wch: 34 }, { wch: 18 }, { wch: 12 }, { wch: 16 }];
+  ws['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 30 }, { wch: 20 }, { wch: 34 }, { wch: 18 }, { wch: 12 }, { wch: 16 }];
   ws['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 8 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 8 } }
   ];
 
   const wb = XLSX.utils.book_new();
