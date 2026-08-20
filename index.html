@@ -6781,14 +6781,23 @@ function parseEstoqueEntradaPlanilha(arrayBuffer, nomeArquivo) {
       if (qtd > 0) { porLoja[loja] = (porLoja[loja] || 0) + qtd; somaLojas += qtd; }
     });
 
+    // Colunas "ignoradas de propósito" (ex.: Papel e Cia) não entram no
+    // estoque do dashboard, mas a quantidade delas ENTRA na conferência da
+    // soma — senão qualquer item que tenha ido parcialmente pra lá acusaria
+    // divergência por engano. Colunas realmente desconhecidas não contam
+    // aqui de propósito: continuam como alerta genuíno de dado estranho.
+    let somaIgnorada = 0;
+    colunasLojaIgnoradas.forEach(({ idx }) => { somaIgnorada += Number(row[idx]) || 0; });
+    const somaConferencia = somaLojas + somaIgnorada;
+
     if (!somaLojas) continue; // nada direcionado a nenhuma loja reconhecida nesta linha — pula
 
     itens.push({
       linha: r + 1,
       barras, descricao,
       qtdTotalPlanilha, valorUnit,
-      porLoja, somaLojas,
-      divergeSoma: qtdTotalPlanilha !== null && Math.abs(somaLojas - qtdTotalPlanilha) > 0.001,
+      porLoja, somaLojas, somaIgnorada,
+      divergeSoma: qtdTotalPlanilha !== null && Math.abs(somaConferencia - qtdTotalPlanilha) > 0.001,
     });
   }
 
@@ -6832,8 +6841,8 @@ function renderEstImportModal(resultado) {
       <td style="padding:7px 10px">${escapeHtmlLpub(it.descricao)}</td>
       <td style="padding:7px 10px;color:var(--text2)">${it.barras ? escapeHtmlLpub(it.barras) : '<span style="color:var(--red)">sem barras</span>'}</td>
       <td style="padding:7px 10px;text-align:right">${it.qtdTotalPlanilha ?? '—'}</td>
-      <td style="padding:7px 10px">${Object.entries(it.porLoja).map(([l, q]) => `${escapeHtmlLpub(l)}: ${q}`).join(' · ')}</td>
-      <td style="padding:7px 10px;color:var(--red);font-size:11px">${it.divergeSoma ? `soma ${it.somaLojas} ≠ total ${it.qtdTotalPlanilha}` : ''}</td>
+      <td style="padding:7px 10px">${Object.entries(it.porLoja).map(([l, q]) => `${escapeHtmlLpub(l)}: ${q}`).join(' · ')}${it.somaIgnorada ? ` <span style="color:var(--text3)">(+ ${it.somaIgnorada} Papel e Cia, não importado)</span>` : ''}</td>
+      <td style="padding:7px 10px;color:var(--red);font-size:11px">${it.divergeSoma ? `soma ${it.somaLojas + it.somaIgnorada} ≠ total ${it.qtdTotalPlanilha}` : ''}</td>
     </tr>
   `).join('');
 
