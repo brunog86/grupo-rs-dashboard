@@ -603,6 +603,33 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
   </div>
 </div>
 
+<!-- Conferência da entrada de estoque importada da planilha, antes de gravar -->
+<div class="modal-overlay" id="estImportModal">
+  <div class="modal-box" style="width:min(920px,92vw);max-height:88vh;overflow-y:auto;">
+    <h3>Conferir entrada de estoque</h3>
+    <div id="estImportResumo" style="font-size:12.5px;color:var(--text2);margin-bottom:14px;line-height:1.7"></div>
+    <div id="estImportAvisos" style="margin-bottom:14px"></div>
+    <div style="max-height:44vh;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead>
+          <tr style="position:sticky;top:0;background:var(--bg3);text-align:left;">
+            <th style="padding:8px 10px;border-bottom:1px solid var(--border)">Produto</th>
+            <th style="padding:8px 10px;border-bottom:1px solid var(--border)">Barras</th>
+            <th style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">Qtd. total</th>
+            <th style="padding:8px 10px;border-bottom:1px solid var(--border)">Divisão por loja</th>
+            <th style="padding:8px 10px;border-bottom:1px solid var(--border)">Alertas</th>
+          </tr>
+        </thead>
+        <tbody id="estImportTabela"></tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancelar" onclick="fecharEstImportModal()">Cancelar</button>
+      <button class="btn-confirmar" id="estImportBtnConfirmar" onclick="confirmarImportacaoEstoque()">Confirmar e gravar</button>
+    </div>
+  </div>
+</div>
+
 <div class="header">
   <div class="logo">Grupo <span class="rs">RS</span></div>
   <div class="header-right">
@@ -977,6 +1004,13 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <span class="filter-sep">até</span>
         <input type="date" class="date-input" id="estDataATE" onchange="onEstPeriodoChange()">
         <button class="apply-btn" onclick="limparPeriodoEspecificoEst()">✕ Limpar período específico</button>
+      </div>
+
+      <!-- Importar entrada de estoque a partir da planilha de precificação -->
+      <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center;" id="estImportBar">
+        <button class="apply-btn" onclick="document.getElementById('estImportInput').click()" style="border-color:var(--green);color:var(--green)">📥 Importar entrada de estoque (planilha)</button>
+        <input type="file" id="estImportInput" accept=".xlsm,.xlsx,.xls" style="display:none">
+        <span id="estImportStatus" style="font-size:12px;color:var(--text2)">Nenhum arquivo carregado</span>
       </div>
 
       <div class="metrics-grid" id="estMetrics"></div>
@@ -5107,8 +5141,7 @@ async function buscarListaFinanceiro(tipo, opts = {}) {
   return rows.map(r => ({
     loja: r.loja_nome, emissao: r.emissao, situacao: r.situacao, categoria: r.categoria,
     dtVenc: r.dt_vencimento, dtQuit: r.dt_quitacao, valorDoc: parseFloat(r.valor_doc),
-    valorQuit: parseFloat(r.valor_quit), historico: r.historico, fornecedor: r.fornecedor,
-    numeroDocumento: r.numero_documento, tipoDocumento: r.tipo_documento
+    valorQuit: parseFloat(r.valor_quit), historico: r.historico, fornecedor: r.fornecedor
   }));
 }
 
@@ -6606,6 +6639,272 @@ function renderEstoqueTabela(produtos) {
   });
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// ESTOQUE — importar entrada a partir da planilha de precificação (Excel)
+// ════════════════════════════════════════════════════════════════════════════
+// Antes, a "entrada" da aba Estoque vinha do NOTA_COMPRA do C8 (via
+// sync_core.py / entradas_itens_dedup), sujeita a duplicidade quando a
+// mesma nota é lançada em mais de uma loja separadamente. Agora vem direto
+// da planilha de precificação que já é preenchida pra toda compra antes de
+// qualquer item ir pra prateleira (ver estoque_entradas_planilha.sql) — o
+// arquivo pronto é subido aqui, o sistema lê e mostra pra conferência antes
+// de gravar.
+
+// Nomes de loja canônicos (iguais aos da tabela `lojas`) mapeados a partir
+// dos cabeçalhos de coluna da "Divisão por Loja" da planilha. Regex em vez
+// de igualdade exata porque o cabeçalho é texto livre digitado por planilha
+// (pode variar "AMÉRICA 1" / "AMERICA 1" / etc). "Papel e Cia" é reconhecida
+// e ignorada de propósito — é uma loja fora do Grupo RS / fora do dashboard
+// por enquanto (combinado nesta sessão).
+const MAPA_COLUNA_LOJA_ESTOQUE = [
+  { re: /AM[ÉE]RICA\s*1\b/i, loja: 'América Import L1' },
+  { re: /AM[ÉE]RICA\s*2\b/i, loja: 'América Import L2' },
+  { re: /DI\s*TUDO/i,        loja: 'DiTudo 20' },
+  { re: /VEM\s*KI\s*TEM/i,   loja: 'Vem Ki Tem' },
+  { re: /^CD$/i,             loja: 'CD' },
+];
+const COLUNA_LOJA_IGNORAR_RE = /PAPEL\s*E?\s*CIA/i;
+
+let estImportParseAtual = null; // guarda o resultado do parse até a confirmação
+
+function parseDataBrParaISO(val) {
+  if (val == null || val === '') return null;
+  if (typeof val === 'number') {
+    // Serial de data do Excel (dias desde 1899-12-30)
+    const ms = Math.round((val - 25569) * 86400 * 1000);
+    const d = new Date(ms);
+    return isNaN(d.getTime()) ? null : d.toISOString().split('T')[0];
+  }
+  const s = String(val).trim();
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m2) return s.substring(0, 10);
+  return null;
+}
+
+function normalizarHeaderTexto(v) {
+  return String(v ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+// Lê a planilha (aba Precificação, ou equivalente) e monta a lista de itens
+// prontos pra conferência, sem gravar nada ainda.
+function parseEstoqueEntradaPlanilha(arrayBuffer, nomeArquivo) {
+  const wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: false });
+
+  // Nome da aba pode variar (acento, ou renomeada) — mesma tolerância usada
+  // na macro ImportarXML_NF do próprio arquivo original.
+  let sheetName = wb.SheetNames.find(n => normalizarHeaderTexto(n).startsWith('precifica'));
+  if (!sheetName) sheetName = wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+  // ── Data de entrada e nota fiscal: procura o rótulo e lê a célula vizinha ──
+  let dataEntrada = null, notaFiscal = null;
+  for (let r = 0; r < Math.min(10, aoa.length); r++) {
+    for (let c = 0; c < aoa[r].length; c++) {
+      const txt = normalizarHeaderTexto(aoa[r][c]);
+      if (!dataEntrada && txt === 'data entrada') dataEntrada = parseDataBrParaISO(aoa[r][c + 1]);
+      if (!notaFiscal && txt.startsWith('nota fiscal')) {
+        const v = String(aoa[r][c + 1] ?? '').trim();
+        if (v) notaFiscal = v;
+      }
+    }
+  }
+
+  // ── Linha de cabeçalho: a que tem uma célula "Barras" ──
+  let headerRow = -1;
+  for (let r = 0; r < Math.min(15, aoa.length); r++) {
+    if (aoa[r].some(cell => normalizarHeaderTexto(cell) === 'barras')) { headerRow = r; break; }
+  }
+  if (headerRow === -1) {
+    return { erro: 'Não encontrei a linha de cabeçalho (coluna "Barras") nesta planilha. Confirme se é o arquivo de precificação certo.' };
+  }
+  const header = aoa[headerRow];
+
+  let idxBarras = -1, idxDescricao = -1, idxQtdTotal = -1, idxValorUnit = -1;
+  header.forEach((cellRaw, idx) => {
+    const norm = normalizarHeaderTexto(cellRaw);
+    if (!norm) return;
+    if (norm === 'barras') idxBarras = idx;
+    else if (norm.includes('descri')) idxDescricao = idx;
+    else if (norm.includes('quantidade') && norm.includes('unid') && !norm.includes('cx')) idxQtdTotal = idx;
+    else if (norm.includes('valor unit') && norm.includes('nf')) idxValorUnit = idx;
+  });
+
+  // Colunas de loja: procura a partir de "Divisão por Loja" (rótulo na linha
+  // acima do cabeçalho) quando existir — evita casar "AMÉRICA" de
+  // "AMÉRICA — LUCRATIVIDADE" (título de outra seção, bem mais cedo).
+  let colInicioLoja = 0;
+  if (headerRow > 0) {
+    const rotuloRow = aoa[headerRow - 1];
+    for (let c = 0; c < rotuloRow.length; c++) {
+      const t = normalizarHeaderTexto(rotuloRow[c]);
+      if (t.includes('divisão por loja') || t.includes('divisao por loja')) { colInicioLoja = c; break; }
+    }
+  }
+  const colunasLoja = [];
+  const colunasLojaIgnoradas = [];
+  const colunasLojaDesconhecidas = [];
+  header.forEach((cellRaw, idx) => {
+    if (idx < colInicioLoja) return;
+    const norm = normalizarHeaderTexto(cellRaw);
+    if (!norm) return;
+    if (COLUNA_LOJA_IGNORAR_RE.test(norm)) { colunasLojaIgnoradas.push({ idx, texto: String(cellRaw) }); return; }
+    const achou = MAPA_COLUNA_LOJA_ESTOQUE.find(m => m.re.test(norm));
+    if (achou) colunasLoja.push({ idx, loja: achou.loja });
+    else if (colInicioLoja > 0) colunasLojaDesconhecidas.push({ idx, texto: String(cellRaw) });
+  });
+
+  if (idxBarras === -1 || idxDescricao === -1) {
+    return { erro: 'Não encontrei as colunas de Barras/Descrição no cabeçalho. Verifique se o layout da planilha mudou.' };
+  }
+  if (!colunasLoja.length) {
+    return { erro: 'Não encontrei nenhuma coluna de divisão por loja reconhecida (AMÉRICA 1/2, DITUDO, VEM KI TEM, CD) no cabeçalho.' };
+  }
+
+  // ── Linhas de item: começam logo após o cabeçalho, até a descrição vir vazia ──
+  const itens = [];
+  for (let r = headerRow + 1; r < aoa.length; r++) {
+    const row = aoa[r];
+    const descricao = String(row[idxDescricao] ?? '').trim();
+    if (!descricao) break;
+
+    const barras = String(row[idxBarras] ?? '').trim() || null;
+    const qtdTotalPlanilha = idxQtdTotal >= 0 ? (Number(row[idxQtdTotal]) || 0) : null;
+    const valorUnit = idxValorUnit >= 0 ? (Number(row[idxValorUnit]) || 0) : null;
+
+    const porLoja = {};
+    let somaLojas = 0;
+    colunasLoja.forEach(({ idx, loja }) => {
+      const qtd = Number(row[idx]) || 0;
+      if (qtd > 0) { porLoja[loja] = (porLoja[loja] || 0) + qtd; somaLojas += qtd; }
+    });
+
+    if (!somaLojas) continue; // nada direcionado a nenhuma loja reconhecida nesta linha — pula
+
+    itens.push({
+      linha: r + 1,
+      barras, descricao,
+      qtdTotalPlanilha, valorUnit,
+      porLoja, somaLojas,
+      divergeSoma: qtdTotalPlanilha !== null && Math.abs(somaLojas - qtdTotalPlanilha) > 0.001,
+    });
+  }
+
+  return {
+    nomeArquivo, sheetName, dataEntrada, notaFiscal,
+    colunasLoja, colunasLojaIgnoradas, colunasLojaDesconhecidas,
+    itens,
+  };
+}
+
+function renderEstImportModal(resultado) {
+  estImportParseAtual = resultado;
+  const resumoEl  = document.getElementById('estImportResumo');
+  const avisosEl  = document.getElementById('estImportAvisos');
+  const tabelaEl  = document.getElementById('estImportTabela');
+
+  const totalItens       = resultado.itens.length;
+  const totalDivergentes = resultado.itens.filter(i => i.divergeSoma).length;
+  const barrasFaltando   = resultado.itens.filter(i => !i.barras).length;
+
+  resumoEl.innerHTML = `
+    <div><strong>Arquivo:</strong> ${escapeHtmlLpub(resultado.nomeArquivo)} (aba "${escapeHtmlLpub(resultado.sheetName)}")</div>
+    <div><strong>Data de entrada:</strong> ${resultado.dataEntrada ? new Date(resultado.dataEntrada + 'T00:00:00').toLocaleDateString('pt-BR') : '<span style="color:var(--red)">não encontrada — confira antes de gravar</span>'}</div>
+    <div><strong>Nota fiscal:</strong> ${resultado.notaFiscal ? escapeHtmlLpub(resultado.notaFiscal) : '(não informada)'}</div>
+    <div><strong>Itens encontrados:</strong> ${totalItens}</div>
+  `;
+
+  const avisos = [];
+  if (!resultado.dataEntrada) avisos.push('Não encontrei a "Data Entrada" no topo da planilha — a importação fica bloqueada até isso ser corrigido no arquivo.');
+  if (totalDivergentes) avisos.push(`${totalDivergentes} ite${totalDivergentes > 1 ? 'ns têm' : 'm tem'} soma da divisão por loja diferente da quantidade total da linha — confira na tabela abaixo antes de confirmar.`);
+  if (barrasFaltando) avisos.push(`${barrasFaltando} item(ns) sem código de barras.`);
+  if (resultado.colunasLojaIgnoradas.length) avisos.push(`Coluna(s) ignorada(s) de propósito: ${resultado.colunasLojaIgnoradas.map(c => c.texto).join(', ')} (não é loja do dashboard).`);
+  if (resultado.colunasLojaDesconhecidas.length) avisos.push(`Coluna(s) de loja não reconhecida(s): ${resultado.colunasLojaDesconhecidas.map(c => c.texto).join(', ')} — essas quantidades NÃO serão importadas. Avise se for uma loja que deveria entrar.`);
+
+  avisosEl.innerHTML = avisos.length
+    ? avisos.map(a => `<div style="background:var(--bg3);border:1px solid var(--orange);border-radius:var(--radius-sm);padding:8px 12px;font-size:12px;color:var(--orange);margin-bottom:6px">⚠ ${escapeHtmlLpub(a)}</div>`).join('')
+    : `<div style="background:var(--bg3);border:1px solid var(--green);border-radius:var(--radius-sm);padding:8px 12px;font-size:12px;color:var(--green)">✓ Nenhum alerta — os números batem.</div>`;
+
+  tabelaEl.innerHTML = resultado.itens.map(it => `
+    <tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:7px 10px">${escapeHtmlLpub(it.descricao)}</td>
+      <td style="padding:7px 10px;color:var(--text2)">${it.barras ? escapeHtmlLpub(it.barras) : '<span style="color:var(--red)">sem barras</span>'}</td>
+      <td style="padding:7px 10px;text-align:right">${it.qtdTotalPlanilha ?? '—'}</td>
+      <td style="padding:7px 10px">${Object.entries(it.porLoja).map(([l, q]) => `${escapeHtmlLpub(l)}: ${q}`).join(' · ')}</td>
+      <td style="padding:7px 10px;color:var(--red);font-size:11px">${it.divergeSoma ? `soma ${it.somaLojas} ≠ total ${it.qtdTotalPlanilha}` : ''}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('estImportBtnConfirmar').disabled = !resultado.dataEntrada || !totalItens;
+  document.getElementById('estImportModal').classList.add('show');
+}
+
+function fecharEstImportModal() {
+  document.getElementById('estImportModal').classList.remove('show');
+  estImportParseAtual = null;
+}
+
+async function confirmarImportacaoEstoque() {
+  const resultado = estImportParseAtual;
+  if (!resultado || !resultado.dataEntrada) return;
+
+  const btn = document.getElementById('estImportBtnConfirmar');
+  btn.disabled = true;
+  btn.textContent = 'Gravando...';
+
+  try {
+    const loteId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    const { data: userData } = await sb.auth.getUser();
+    const userId = userData?.user?.id || null;
+
+    const payload = [];
+    const lojasTocadas = new Set();
+    for (const it of resultado.itens) {
+      for (const [lojaNome, qtd] of Object.entries(it.porLoja)) {
+        const loja = todasLojasCadastro.find(l => l.nome === lojaNome);
+        if (!loja) { console.warn('[estoque_entradas] loja não encontrada no cadastro:', lojaNome); continue; }
+        lojasTocadas.add(lojaNome);
+        const valorTotalItem = it.valorUnit != null ? +(it.valorUnit * qtd).toFixed(2) : null;
+        payload.push({
+          loja_id: loja.id,
+          barras: it.barras,
+          produto: it.descricao,
+          quantidade: qtd,
+          valor_unitario: it.valorUnit,
+          valor_total_item: valorTotalItem,
+          data_emissao: resultado.dataEntrada,
+          nota_fiscal: resultado.notaFiscal,
+          lote_id: loteId,
+          arquivo_origem: resultado.nomeArquivo,
+          criado_por: userId,
+        });
+      }
+    }
+
+    if (!payload.length) { showToast('Nada para gravar — confira a divisão por loja no arquivo.', 'error'); return; }
+
+    for (let i = 0; i < payload.length; i += 500) {
+      const lote = payload.slice(i, i + 500);
+      const { error } = await sb.from('estoque_entradas').insert(lote);
+      if (error) throw error;
+    }
+
+    showToast(`Entrada de estoque gravada — ${payload.length} lançamento(s) em ${lojasTocadas.size} loja(s).`, 'success');
+    document.getElementById('estImportStatus').textContent = `✓ ${resultado.itens.length} itens importados (${resultado.nomeArquivo})`;
+    document.getElementById('estImportStatus').style.color = 'var(--green)';
+    fecharEstImportModal();
+    if (document.getElementById('tab-estoque')?.classList.contains('active')) await renderEstoqueLeve();
+  } catch (e) {
+    console.error('[estoque_entradas] erro ao gravar:', e);
+    showToast('Erro ao gravar a entrada de estoque: ' + (e.message || e), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Confirmar e gravar';
+  }
+}
+
 // Exporta em Excel a lista de produtos do painel "Produtos por marca" (o
 // mesmo que abre ao filtrar por marca na aba Produtos & Marcas), incluindo
 // o código de barras de cada produto — pedido nesta sessão, junto com a
@@ -7537,10 +7836,6 @@ function buildFinListGeneric(data, listId, corAberto, hoje) {
           <div style="font-size:11px;color:var(--text2);margin-top:2px">
             ${r.categoria || ''}${r.historico && r.fornecedor ? ' · '+r.historico : ''}${r.loja ? ' · '+r.loja : ''}
           </div>
-          ${(r.numeroDocumento || r.tipoDocumento) ? `<div style="font-size:10px;color:var(--text3);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap">
-            ${r.numeroDocumento ? `<span>Nro Doc: <strong style="color:var(--text2);font-weight:700">${escapeHtmlLpub(String(r.numeroDocumento))}</strong></span>` : ''}
-            ${r.tipoDocumento ? `<span>Tipo: <strong style="color:var(--text2);font-weight:700">${escapeHtmlLpub(String(r.tipoDocumento))}</strong></span>` : ''}
-          </div>` : ''}
         </div>
         <div style="text-align:right;flex-shrink:0;margin-left:12px">
           <div style="font-size:13px;font-weight:700;color:${cor}">${fmt(r.valorDoc)}</div>
@@ -7604,13 +7899,11 @@ function exportFinExcel(tipo) {
     [titulo],
     [subtitulo],
     [],
-    ['Vencimento', 'Nro Doc', 'Tipo', 'Fornecedor', 'Categoria', 'Observação', 'Loja', 'Situação', 'Valor (R$)']
+    ['Vencimento', 'Fornecedor', 'Categoria', 'Observação', 'Loja', 'Situação', 'Valor (R$)']
   ];
   ordenados.forEach(r => {
     linhas.push([
       fmtData(r.dtVenc || r.emissao),
-      r.numeroDocumento || '',
-      r.tipoDocumento || '',
       r.fornecedor || '—',
       r.categoria || '',
       r.historico || '',
@@ -7621,13 +7914,13 @@ function exportFinExcel(tipo) {
   });
   const totalGeral = ordenados.reduce((s, r) => s + (r.valorDoc || 0), 0);
   linhas.push([]);
-  linhas.push(['', '', '', '', '', '', '', 'Total', Number(totalGeral.toFixed(2))]);
+  linhas.push(['', '', '', '', '', 'Total', Number(totalGeral.toFixed(2))]);
 
   const ws = XLSX.utils.aoa_to_sheet(linhas);
-  ws['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 30 }, { wch: 20 }, { wch: 34 }, { wch: 18 }, { wch: 12 }, { wch: 16 }];
+  ws['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 20 }, { wch: 34 }, { wch: 18 }, { wch: 12 }, { wch: 16 }];
   ws['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 8 } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 8 } }
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }
   ];
 
   const wb = XLSX.utils.book_new();
@@ -10694,6 +10987,35 @@ document.addEventListener('DOMContentLoaded', async () => {
   zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('drag'); if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files); });
 
   // ── Catálogo e produtos ───────────────────────────────────
+  // ── Importar entrada de estoque (planilha de precificação) ──────────────
+  document.getElementById('estImportInput').addEventListener('change', e => {
+    if (!podeEscrever()) { showToast('Seu perfil não tem permissão para importar entrada de estoque.', 'error'); return; }
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      let resultado;
+      try {
+        resultado = parseEstoqueEntradaPlanilha(ev.target.result, file.name);
+      } catch (err) {
+        console.error('[estoque_entradas] erro ao ler planilha:', err);
+        showToast('Erro ao ler a planilha. Confirme se é o arquivo de precificação certo.', 'error');
+        return;
+      }
+      if (resultado.erro) {
+        showToast(resultado.erro, 'error');
+        return;
+      }
+      if (!resultado.itens.length) {
+        showToast('Nenhum item com quantidade direcionada a uma loja reconhecida foi encontrado nesta planilha.', 'error');
+        return;
+      }
+      renderEstImportModal(resultado);
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  });
+
   document.getElementById('catalogoInput').addEventListener('change', e => {
     if (!podeEscrever()) { showToast('Seu perfil não tem permissão para carregar arquivos.', 'error'); return; }
     const file = e.target.files[0];
