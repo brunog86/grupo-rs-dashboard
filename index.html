@@ -1007,6 +1007,18 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <button class="apply-btn" onclick="limparPeriodoEspecificoEst()">✕ Limpar período específico</button>
       </div>
 
+      <!-- Busca direta por código de barras — sempre rápida (sem período, sem
+           o limite de 500 itens da tabela abaixo), pra confirmar se um item
+           específico entrou no estoque, independente do filtro de período. -->
+      <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center;">
+        <span class="filter-label">Buscar por código de barras:</span>
+        <input type="text" class="date-input" id="estBuscaBarrasInput" style="max-width:220px" placeholder="Código de barras"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();buscarEstoquePorBarras();}">
+        <button class="apply-btn" onclick="buscarEstoquePorBarras()">🔍 Buscar</button>
+        <button class="apply-btn" onclick="limparBuscaBarrasEstoque()" style="display:none" id="estBuscaBarrasLimparBtn">✕ Limpar busca</button>
+      </div>
+      <div id="estBuscaBarrasResultado" style="display:none;margin-bottom:20px;"></div>
+
       <!-- Importar entrada de estoque a partir da planilha de precificação -->
       <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center;" id="estImportBar">
         <button class="apply-btn" onclick="document.getElementById('estImportInput').click()" style="border-color:var(--green);color:var(--green)">📥 Importar entrada de estoque (planilha)</button>
@@ -6958,6 +6970,72 @@ async function confirmarImportacaoEstoque() {
     btn.disabled = false;
     btn.textContent = 'Confirmar e gravar';
   }
+}
+
+// ── Busca direta por código de barras (independente de período e do limite
+// de 500 itens da tabela "Entrada × Saída por produto") ────────────────────
+async function buscarEstoquePorBarras() {
+  const input = document.getElementById('estBuscaBarrasInput');
+  const barras = input.value.trim();
+  if (!barras) { showToast('Digite um código de barras.', 'error'); return; }
+
+  const lojaFil = document.getElementById('estLojaFilter')?.value || '';
+  const rows = await callRpc('fn_buscar_entrada_saida_por_barras', {
+    p_barras: barras, p_loja_id: lojaIdPorNome(lojaFil)
+  }, false);
+
+  renderBuscaBarrasEstoque(barras, rows);
+}
+
+function renderBuscaBarrasEstoque(barras, rows) {
+  const el = document.getElementById('estBuscaBarrasResultado');
+  document.getElementById('estBuscaBarrasLimparBtn').style.display = 'inline-flex';
+  el.style.display = 'block';
+
+  if (!rows.length) {
+    el.innerHTML = `
+      <div class="empty">
+        <div class="empty-icon">🔍</div>
+        Nenhum lançamento (entrada ou saída) encontrado para o código de barras <strong>${escapeHtmlLpub(barras)}</strong>, em nenhuma loja, em nenhum período.
+      </div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="section-title" style="margin-top:0">Resultado — código de barras ${escapeHtmlLpub(barras)} (todo o período, sem limite de itens)</div>
+    <div class="ranking-card">
+      <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 1fr 1fr;gap:10px;padding:10px 14px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.03em;border-bottom:1px solid var(--border)">
+        <div>Loja / Produto</div>
+        <div style="text-align:right">Entrada (qtd)</div>
+        <div style="text-align:right">Entrada (R$)</div>
+        <div style="text-align:right">Última entrada</div>
+        <div style="text-align:right">Saída (qtd)</div>
+        <div style="text-align:right">Saída (R$)</div>
+        <div style="text-align:right">Saldo (qtd)</div>
+      </div>
+      ${rows.map(r => `
+        <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 1fr 1fr;gap:10px;padding:9px 14px;align-items:center;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtmlLpub(r.loja_nome)}</div>
+            <div style="font-size:11px;color:var(--text2)">${escapeHtmlLpub(r.produto || '')}</div>
+          </div>
+          <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(r.entrada_qtd)}</div>
+          <div style="text-align:right;font-size:13px;color:var(--text)">${fmt(r.entrada_valor)}</div>
+          <div style="text-align:right;font-size:12px;color:var(--text2)">${r.ultima_entrada ? new Date(r.ultima_entrada + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</div>
+          <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(r.saida_qtd)}</div>
+          <div style="text-align:right;font-size:13px;color:var(--text)">${fmt(r.saida_valor)}</div>
+          <div style="text-align:right;font-size:13px;font-weight:700;color:${r.saldo_qtd < 0 ? 'var(--red)' : 'var(--text)'}">${fmtNum(r.saldo_qtd)}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function limparBuscaBarrasEstoque() {
+  document.getElementById('estBuscaBarrasInput').value = '';
+  document.getElementById('estBuscaBarrasResultado').style.display = 'none';
+  document.getElementById('estBuscaBarrasResultado').innerHTML = '';
+  document.getElementById('estBuscaBarrasLimparBtn').style.display = 'none';
 }
 
 // Exporta em Excel a lista de produtos do painel "Produtos por marca" (o
