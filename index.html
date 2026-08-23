@@ -1032,6 +1032,27 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
       <div class="ranking-card">
         <div id="estTabelaList"></div>
       </div>
+
+      <div class="section-title" style="margin-top:32px">🔄 Giro, Cobertura e Reposição de Estoque</div>
+      <div style="font-size:11.5px;color:var(--text3);margin:-4px 0 12px">
+        Considera só itens com pelo menos uma entrada registrada pela importação de planilha (ver "Importar entrada de estoque" acima) — produtos sem nenhum histórico de entrada nesse sistema ainda não aparecem aqui.
+      </div>
+      <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center;">
+        <span class="filter-label">Loja:</span>
+        <select class="date-input" id="estGiroLojaFilter" style="min-width:160px" onchange="renderEstoqueGiro()">
+          <option value="">Todas as lojas</option>
+        </select>
+        <span class="filter-label" style="margin-left:8px">Ponto de pedido (dias de venda):</span>
+        <input type="number" min="1" step="1" value="30" class="date-input" id="estGiroDiasPonto" style="width:80px" onchange="renderEstoqueGiro()">
+        <span style="flex:1"></span>
+        <button class="apply-btn active" id="btnGiroRepor" onclick="setEstGiroModo('repor')">⚠ Repor agora</button>
+        <button class="apply-btn" id="btnGiroMaisVendidos" onclick="setEstGiroModo('maisVendidos')">🔥 Mais vendidos</button>
+        <button class="apply-btn" id="btnGiroEncalhados" onclick="setEstGiroModo('encalhados')">🐌 Encalhados</button>
+        <button class="apply-btn" id="btnGiroTodos" onclick="setEstGiroModo('todos')">Todos</button>
+      </div>
+      <div class="ranking-card">
+        <div id="estGiroList"></div>
+      </div>
     </div>
 
     <!-- VENDEDORES -->
@@ -6580,7 +6601,7 @@ async function renderEstoqueLeve() {
 
   const [resumo, produtos, marcas, grupos] = await Promise.all([
     buscarResumoEntradaSaida(dataInicio, dataFim, lojaFil),
-    buscarEntradaSaidaProduto(dataInicio, dataFim, lojaFil, marcaFil, grupoFil, 500),
+    buscarEntradaSaidaProduto(dataInicio, dataFim, lojaFil, marcaFil, grupoFil, 2000),
     buscarRankingMarcas(dataInicio, dataFim, lojaFil, 200, grupoFil),
     buscarRankingGrupos(dataInicio, dataFim, lojaFil, 200),
   ]);
@@ -6962,7 +6983,7 @@ async function confirmarImportacaoEstoque() {
     document.getElementById('estImportStatus').textContent = `✓ ${resultado.itens.length} itens importados (${resultado.nomeArquivo})`;
     document.getElementById('estImportStatus').style.color = 'var(--green)';
     fecharEstImportModal();
-    if (document.getElementById('tab-estoque')?.classList.contains('active')) await renderEstoqueLeve();
+    if (document.getElementById('tab-estoque')?.classList.contains('active')) { await renderEstoqueLeve(); await renderEstoqueGiro(); }
   } catch (e) {
     console.error('[estoque_entradas] erro ao gravar:', e);
     showToast('Erro ao gravar a entrada de estoque: ' + (e.message || e), 'error');
@@ -7036,6 +7057,131 @@ function limparBuscaBarrasEstoque() {
   document.getElementById('estBuscaBarrasResultado').style.display = 'none';
   document.getElementById('estBuscaBarrasResultado').innerHTML = '';
   document.getElementById('estBuscaBarrasLimparBtn').style.display = 'none';
+}
+
+// ── Giro, cobertura e reposição de estoque ──────────────────────────────
+let estGiroDataCache = [];
+let estGiroModoAtual = 'repor';
+
+const STATUS_GIRO_LABEL = {
+  sem_estoque: { texto: 'Sem estoque',       cor: 'var(--red)'    },
+  repor:       { texto: 'Repor',             cor: 'var(--orange)' },
+  sem_giro:    { texto: 'Sem giro recente',  cor: 'var(--text2)'  },
+  ok:          { texto: 'OK',                cor: 'var(--green)'  },
+};
+
+async function renderEstoqueGiro() {
+  const lojaSel = document.getElementById('estGiroLojaFilter');
+  if (lojaSel && !lojaSel.dataset.populated) {
+    const nomesLojas = todasLojasCadastro.map(l => l.nome).sort();
+    lojaSel.innerHTML = '<option value="">Todas as lojas</option>' + nomesLojas.map(l => `<option value="${l}">${l}</option>`).join('');
+    lojaSel.dataset.populated = '1';
+  }
+
+  const lojaFil = lojaSel?.value || '';
+  const dias = parseInt(document.getElementById('estGiroDiasPonto')?.value, 10) || 30;
+
+  const rows = await callRpc('fn_estoque_giro_reposicao', {
+    p_loja_id: lojaIdPorNome(lojaFil), p_dias_ponto_pedido: dias, p_limite: 3000
+  }, false);
+
+  estGiroDataCache = rows.map(r => ({
+    lojaNome: r.loja_nome, produto: r.produto, barras: r.barras,
+    dataInicio: r.data_inicio, diasRastreados: r.dias_rastreados,
+    entradaTotal: parseFloat(r.entrada_total), saidaTotal: parseFloat(r.saida_total),
+    saldoAtual: parseFloat(r.saldo_atual), vendaMediaDiaria: parseFloat(r.venda_media_diaria),
+    coberturaDias: r.cobertura_dias === null ? null : parseFloat(r.cobertura_dias),
+    pontoPedido: parseFloat(r.ponto_pedido), sugestaoRepor: parseFloat(r.sugestao_repor),
+    status: r.status,
+  }));
+
+  aplicarFiltroGiro();
+}
+
+function setEstGiroModo(modo) {
+  estGiroModoAtual = modo;
+  ['Repor', 'MaisVendidos', 'Encalhados', 'Todos'].forEach(m => {
+    document.getElementById('btnGiro' + m)?.classList.toggle('active', m.toLowerCase() === modo.toLowerCase());
+  });
+  aplicarFiltroGiro();
+}
+
+function aplicarFiltroGiro() {
+  let linhas = estGiroDataCache;
+  if (estGiroModoAtual === 'repor') {
+    linhas = linhas.filter(r => r.status === 'repor' || r.status === 'sem_estoque');
+    linhas = [...linhas].sort((a, b) => (a.coberturaDias ?? -1) - (b.coberturaDias ?? -1));
+  } else if (estGiroModoAtual === 'maisVendidos') {
+    linhas = [...linhas].sort((a, b) => b.vendaMediaDiaria - a.vendaMediaDiaria);
+  } else if (estGiroModoAtual === 'encalhados') {
+    linhas = linhas.filter(r => r.status === 'sem_giro');
+    linhas = [...linhas].sort((a, b) => b.saldoAtual - a.saldoAtual);
+  } else {
+    linhas = [...linhas].sort((a, b) => a.saldoAtual - b.saldoAtual);
+  }
+  renderEstoqueGiroTabela(linhas);
+}
+
+function renderEstoqueGiroTabela(linhas) {
+  const listEl = document.getElementById('estGiroList');
+  if (!listEl) return;
+
+  if (!linhas.length) {
+    const msgs = {
+      repor: 'Nenhum item precisando de reposição no momento.',
+      maisVendidos: 'Nenhum item com movimento encontrado.',
+      encalhados: 'Nenhum item parado encontrado.',
+      todos: 'Nenhum item com entrada registrada ainda.',
+    };
+    listEl.innerHTML = `<div class="empty"><div class="empty-icon">📦</div>${msgs[estGiroModoAtual] || 'Nada encontrado.'}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.style.cssText = `
+    display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr; gap:10px;
+    padding:10px 14px; font-size:11px; font-weight:700; color:var(--text2);
+    text-transform:uppercase; letter-spacing:.03em; border-bottom:1px solid var(--border);
+  `;
+  header.innerHTML = `
+    <div>Produto / Loja</div>
+    <div style="text-align:right">Saldo atual</div>
+    <div style="text-align:right">Venda média/dia</div>
+    <div style="text-align:right">Cobertura</div>
+    <div style="text-align:right">Ponto de pedido</div>
+    <div style="text-align:right">Sugestão de compra</div>
+    <div style="text-align:right">Status</div>
+  `;
+  listEl.appendChild(header);
+
+  linhas.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = `
+      display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr; gap:10px;
+      padding:9px 14px; align-items:center;
+      ${i < linhas.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}
+      transition:background 0.15s;
+    `;
+    row.onmouseenter = () => row.style.background = 'var(--bg4)';
+    row.onmouseleave = () => row.style.background = '';
+    const st = STATUS_GIRO_LABEL[r.status] || { texto: r.status, cor: 'var(--text2)' };
+    const coberturaTxt = r.coberturaDias === null ? '—' : `${fmtNum(r.coberturaDias)}d`;
+    row.innerHTML = `
+      <div style="min-width:0">
+        <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtmlLpub(r.produto || 'Sem descrição')}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${escapeHtmlLpub(r.lojaNome)}${r.barras ? ' · ' + escapeHtmlLpub(r.barras) : ''}</div>
+      </div>
+      <div style="text-align:right;font-size:13px;font-weight:700;color:${r.saldoAtual <= 0 ? 'var(--red)' : 'var(--text)'}">${fmtNum(r.saldoAtual)}</div>
+      <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(r.vendaMediaDiaria)}</div>
+      <div style="text-align:right;font-size:13px;color:var(--text)">${coberturaTxt}</div>
+      <div style="text-align:right;font-size:13px;color:var(--text2)">${fmtNum(r.pontoPedido)}</div>
+      <div style="text-align:right;font-size:13px;font-weight:700;color:${r.sugestaoRepor > 0 ? 'var(--orange)' : 'var(--text2)'}">${r.sugestaoRepor > 0 ? fmtNum(r.sugestaoRepor) : '—'}</div>
+      <div style="text-align:right;font-size:11.5px;font-weight:700;color:${st.cor}">${st.texto}</div>
+    `;
+    listEl.appendChild(row);
+  });
 }
 
 // Exporta em Excel a lista de produtos do painel "Produtos por marca" (o
@@ -10029,7 +10175,7 @@ function switchTab(name, btn) {
   if (name === 'mensal')      renderMensalLeve();
   if (name === 'vendedores')  renderVendedoresLeve();
   if (name === 'produtos')    { populateProdMesSelectoresLeve().then(() => renderProdutosLeve()); }
-  if (name === 'estoque')     { populateEstMesSelectoresLeve(); renderEstoqueLeve(); }
+  if (name === 'estoque')     { populateEstMesSelectoresLeve(); renderEstoqueLeve(); renderEstoqueGiro(); }
   if (name === 'financeiro')  { populateFinMesFilter(); renderFinanceiroLeve(); }
   if (name === 'pagamentos')  renderPagamentosLeve();
   if (name === 'analise')     renderAnaliseLeve();
