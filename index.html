@@ -608,6 +608,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
   <div class="modal-box" style="width:min(920px,92vw);max-height:88vh;overflow-y:auto;">
     <h3>Conferir entrada de estoque</h3>
     <div id="estImportResumo" style="font-size:12.5px;color:var(--text2);margin-bottom:14px;line-height:1.7"></div>
+    <div id="estImportDuplicataAviso" style="margin-bottom:14px"></div>
     <div id="estImportAvisos" style="margin-bottom:14px"></div>
     <div style="max-height:44vh;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);">
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
@@ -6443,7 +6444,15 @@ async function populateEstMesSelectoresLeve() {
   if (selATE && !selATE.dataset.populated) { selATE.innerHTML = opts; selATE.dataset.populated = '1'; }
 }
 
+// Flag explícita pro botão "Tudo" — sem ela, a ausência de qualquer filtro
+// preenchido (inclusive logo depois de clicar em "Tudo", que só limpa os
+// campos) cai no mesmo default de "últimos 30 dias" de renderEstoqueLeve(),
+// fazendo "Tudo" na prática nunca mostrar o histórico completo. Qualquer
+// outra mudança de filtro de período desliga essa flag.
+let estPeriodoTudo = false;
+
 function onEstMesChange() {
+  estPeriodoTudo = false;
   document.getElementById('estDiaFilter').value = '';
   document.getElementById('estDataDE').value = '';
   document.getElementById('estDataATE').value = '';
@@ -6451,6 +6460,7 @@ function onEstMesChange() {
 }
 
 function onEstDiaChange() {
+  estPeriodoTudo = false;
   if (document.getElementById('estDiaFilter').value) {
     document.getElementById('estMesAnoDE').value = '';
     document.getElementById('estMesAnoATE').value = '';
@@ -6461,6 +6471,7 @@ function onEstDiaChange() {
 }
 
 function onEstPeriodoChange() {
+  estPeriodoTudo = false;
   if (document.getElementById('estDataDE').value || document.getElementById('estDataATE').value) {
     document.getElementById('estMesAnoDE').value = '';
     document.getElementById('estMesAnoATE').value = '';
@@ -6470,6 +6481,7 @@ function onEstPeriodoChange() {
 }
 
 function limparPeriodoEspecificoEst(rerender = true) {
+  estPeriodoTudo = false;
   document.getElementById('estDiaFilter').value = '';
   document.getElementById('estDataDE').value = '';
   document.getElementById('estDataATE').value = '';
@@ -6507,6 +6519,7 @@ function setEstTudo() {
   document.getElementById('estMesAnoDE').value  = '';
   document.getElementById('estMesAnoATE').value = '';
   limparPeriodoEspecificoEst(false);
+  estPeriodoTudo = true;
   renderEstoqueLeve();
 }
 
@@ -6528,7 +6541,9 @@ async function renderEstoqueLeve() {
   const grupoFil = document.getElementById('estGrupoFilter')?.value || null;
 
   let dataInicio, dataFim;
-  if (diaEsp) {
+  if (estPeriodoTudo) {
+    dataInicio = '2000-01-01'; dataFim = '2099-12-31';
+  } else if (diaEsp) {
     dataInicio = diaEsp; dataFim = diaEsp;
   } else if (dataDE || dataATE) {
     dataInicio = dataDE || '2000-01-01';
@@ -6847,8 +6862,34 @@ function renderEstImportModal(resultado) {
     </tr>
   `).join('');
 
-  document.getElementById('estImportBtnConfirmar').disabled = !resultado.dataEntrada || !totalItens;
+  const dupEl = document.getElementById('estImportDuplicataAviso');
+  if (resultado.duplicataAnterior) {
+    const quando = new Date(resultado.duplicataAnterior).toLocaleString('pt-BR');
+    dupEl.innerHTML = `
+      <div style="background:rgba(244,63,94,0.08);border:1px solid var(--red);border-radius:var(--radius-sm);padding:10px 12px;font-size:12.5px;color:var(--red);margin-bottom:8px">
+        <div style="font-weight:700;margin-bottom:4px">⚠ Este arquivo (ou nota fiscal) já foi importado antes — em ${quando}.</div>
+        <div>Importar de novo vai duplicar os itens no estoque. Só confirme se tiver certeza de que não é repetição.</div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
+        <input type="checkbox" id="estImportConfirmarDuplicata" onchange="atualizarBotaoConfirmarImportEstoque()">
+        Sim, sei que já importei este arquivo antes — quero importar mesmo assim.
+      </label>
+    `;
+  } else {
+    dupEl.innerHTML = '';
+  }
+
+  atualizarBotaoConfirmarImportEstoque();
   document.getElementById('estImportModal').classList.add('show');
+}
+
+function atualizarBotaoConfirmarImportEstoque() {
+  const resultado = estImportParseAtual;
+  const btn = document.getElementById('estImportBtnConfirmar');
+  if (!resultado) { btn.disabled = true; return; }
+  const precisaConfirmarDuplicata = !!resultado.duplicataAnterior;
+  const duplicataConfirmada = !precisaConfirmarDuplicata || document.getElementById('estImportConfirmarDuplicata')?.checked;
+  btn.disabled = !resultado.dataEntrada || !resultado.itens.length || !duplicataConfirmada;
 }
 
 function fecharEstImportModal() {
@@ -6859,6 +6900,10 @@ function fecharEstImportModal() {
 async function confirmarImportacaoEstoque() {
   const resultado = estImportParseAtual;
   if (!resultado || !resultado.dataEntrada) return;
+  if (resultado.duplicataAnterior && !document.getElementById('estImportConfirmarDuplicata')?.checked) {
+    showToast('Marque a confirmação de importação duplicada antes de continuar.', 'error');
+    return;
+  }
 
   const btn = document.getElementById('estImportBtnConfirmar');
   btn.disabled = true;
@@ -11009,7 +11054,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = async ev => {
       let resultado;
       try {
         resultado = parseEstoqueEntradaPlanilha(ev.target.result, file.name);
@@ -11025,6 +11070,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!resultado.itens.length) {
         showToast('Nenhum item com quantidade direcionada a uma loja reconhecida foi encontrado nesta planilha.', 'error');
         return;
+      }
+      // Detecta se esse arquivo (pelo nome) ou essa nota fiscal já foram
+      // importados antes, pra avisar antes de duplicar o estoque.
+      try {
+        const checks = [
+          sb.from('estoque_entradas').select('criado_em').eq('arquivo_origem', resultado.nomeArquivo).order('criado_em', { ascending: false }).limit(1)
+        ];
+        if (resultado.notaFiscal) {
+          checks.push(sb.from('estoque_entradas').select('criado_em').eq('nota_fiscal', resultado.notaFiscal).order('criado_em', { ascending: false }).limit(1));
+        }
+        const results = await Promise.all(checks);
+        let duplicataAnterior = null;
+        results.forEach(r => {
+          const t = r.data && r.data[0] ? r.data[0].criado_em : null;
+          if (t && (!duplicataAnterior || t > duplicataAnterior)) duplicataAnterior = t;
+        });
+        resultado.duplicataAnterior = duplicataAnterior;
+      } catch (err) {
+        console.error('[estoque_entradas] erro ao checar duplicidade:', err);
+        resultado.duplicataAnterior = null; // não bloqueia a importação por causa de uma falha na checagem
       }
       renderEstImportModal(resultado);
     };
