@@ -6880,11 +6880,15 @@ function renderEstImportModal(resultado) {
     dupEl.innerHTML = `
       <div style="background:rgba(244,63,94,0.08);border:1px solid var(--red);border-radius:var(--radius-sm);padding:10px 12px;font-size:12.5px;color:var(--red);margin-bottom:8px">
         <div style="font-weight:700;margin-bottom:4px">⚠ Este arquivo (ou nota fiscal) já foi importado antes — em ${quando}.</div>
-        <div>Importar de novo vai duplicar os itens no estoque. Só confirme se tiver certeza de que não é repetição.</div>
+        <div>Escolha o que fazer antes de confirmar:</div>
       </div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
-        <input type="checkbox" id="estImportConfirmarDuplicata" onchange="atualizarBotaoConfirmarImportEstoque()">
-        Sim, sei que já importei este arquivo antes — quero importar mesmo assim.
+      <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer;margin-bottom:8px">
+        <input type="radio" name="estImportModoDuplicata" value="duplicar" id="estImportModoDuplicar" onchange="atualizarBotaoConfirmarImportEstoque()" style="margin-top:2px">
+        <span><strong>Duplicar mesmo assim</strong> — mantém a importação anterior e adiciona esses itens por cima. Só use se tiver certeza de que não é repetição.</span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
+        <input type="radio" name="estImportModoDuplicata" value="substituir" id="estImportModoSubstituir" onchange="atualizarBotaoConfirmarImportEstoque()" style="margin-top:2px">
+        <span><strong>Substituir a importação anterior</strong> — apaga os lançamentos gravados antes para este arquivo/nota fiscal e grava só os itens desta planilha no lugar. Use quando corrigiu algo no arquivo e está reimportando. Exige perfil admin.</span>
       </label>
     `;
   } else {
@@ -6895,13 +6899,19 @@ function renderEstImportModal(resultado) {
   document.getElementById('estImportModal').classList.add('show');
 }
 
+function modoDuplicataSelecionado() {
+  return document.querySelector('input[name="estImportModoDuplicata"]:checked')?.value || null;
+}
+
 function atualizarBotaoConfirmarImportEstoque() {
   const resultado = estImportParseAtual;
   const btn = document.getElementById('estImportBtnConfirmar');
   if (!resultado) { btn.disabled = true; return; }
-  const precisaConfirmarDuplicata = !!resultado.duplicataAnterior;
-  const duplicataConfirmada = !precisaConfirmarDuplicata || document.getElementById('estImportConfirmarDuplicata')?.checked;
-  btn.disabled = !resultado.dataEntrada || !resultado.itens.length || !duplicataConfirmada;
+  const precisaEscolherModo = !!resultado.duplicataAnterior;
+  const modo = modoDuplicataSelecionado();
+  const modoEscolhido = !precisaEscolherModo || !!modo;
+  btn.disabled = !resultado.dataEntrada || !resultado.itens.length || !modoEscolhido;
+  btn.textContent = modo === 'substituir' ? 'Substituir e gravar' : 'Confirmar e gravar';
 }
 
 function fecharEstImportModal() {
@@ -6912,14 +6922,15 @@ function fecharEstImportModal() {
 async function confirmarImportacaoEstoque() {
   const resultado = estImportParseAtual;
   if (!resultado || !resultado.dataEntrada) return;
-  if (resultado.duplicataAnterior && !document.getElementById('estImportConfirmarDuplicata')?.checked) {
-    showToast('Marque a confirmação de importação duplicada antes de continuar.', 'error');
+  const modo = resultado.duplicataAnterior ? modoDuplicataSelecionado() : null;
+  if (resultado.duplicataAnterior && !modo) {
+    showToast('Escolha "Duplicar mesmo assim" ou "Substituir a importação anterior" antes de continuar.', 'error');
     return;
   }
 
   const btn = document.getElementById('estImportBtnConfirmar');
   btn.disabled = true;
-  btn.textContent = 'Gravando...';
+  btn.textContent = modo === 'substituir' ? 'Substituindo...' : 'Gravando...';
 
   try {
     const loteId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
@@ -6952,13 +6963,32 @@ async function confirmarImportacaoEstoque() {
 
     if (!payload.length) { showToast('Nada para gravar — confira a divisão por loja no arquivo.', 'error'); return; }
 
+    // "Substituir": só apaga os lançamentos gravados antes (mesmo arquivo de
+    // origem e/ou mesma nota fiscal — mesmo critério usado pra detectar a
+    // duplicidade) DEPOIS de já termos o payload novo pronto, pra nunca
+    // apagar o anterior sem ter o que colocar no lugar. Pedido do Bruno em
+    // 24/08/2026, pra reimportar depois de corrigir algo no arquivo sem
+    // duplicar nem precisar apagar manualmente. Exige perfil admin (RLS:
+    // estoque_entradas_delete só permite admin).
+    if (modo === 'substituir') {
+      if (resultado.nomeArquivo) {
+        const { error: delErro1 } = await sb.from('estoque_entradas').delete().eq('arquivo_origem', resultado.nomeArquivo);
+        if (delErro1) throw delErro1;
+      }
+      if (resultado.notaFiscal) {
+        const { error: delErro2 } = await sb.from('estoque_entradas').delete().eq('nota_fiscal', resultado.notaFiscal);
+        if (delErro2) throw delErro2;
+      }
+    }
+
     for (let i = 0; i < payload.length; i += 500) {
       const lote = payload.slice(i, i + 500);
       const { error } = await sb.from('estoque_entradas').insert(lote);
       if (error) throw error;
     }
 
-    showToast(`Entrada de estoque gravada — ${payload.length} lançamento(s) em ${lojasTocadas.size} loja(s).`, 'success');
+    const msgAcao = modo === 'substituir' ? 'Entrada de estoque substituída' : 'Entrada de estoque gravada';
+    showToast(`${msgAcao} — ${payload.length} lançamento(s) em ${lojasTocadas.size} loja(s).`, 'success');
     document.getElementById('estImportStatus').textContent = `✓ ${resultado.itens.length} itens importados (${resultado.nomeArquivo})`;
     document.getElementById('estImportStatus').style.color = 'var(--green)';
     fecharEstImportModal();
@@ -6967,8 +6997,7 @@ async function confirmarImportacaoEstoque() {
     console.error('[estoque_entradas] erro ao gravar:', e);
     showToast('Erro ao gravar a entrada de estoque: ' + (e.message || e), 'error');
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Confirmar e gravar';
+    atualizarBotaoConfirmarImportEstoque();
   }
 }
 
