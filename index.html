@@ -2297,6 +2297,9 @@ function fmtK(v) {
   return fmt(v);
 }
 function fmtNum(v) { return new Intl.NumberFormat('pt-BR').format(v); }
+// Sempre 1 casa decimal, mesmo em valores exatos (ex.: 50 -> "50,0") — usado
+// na coluna "% Saldo" da aba Estoque, pedido do Bruno em 24/08/2026.
+function fmtPct1(v) { return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(v); }
 
 function parseCSV(text) {
   const lines = text.trim().split('\n');
@@ -6668,7 +6671,7 @@ function renderEstoqueTabela(produtos) {
     row.onmouseleave = () => row.style.background = '';
     const saldoCor = p.saldoQtd < 0 ? 'var(--red)' : 'var(--text)';
     const pctSaldo = estPctSaldo(p);
-    const pctTxt = pctSaldo === null ? '—' : `${fmtNum(pctSaldo)}%`;
+    const pctTxt = pctSaldo === null ? '—' : `${fmtPct1(pctSaldo)}%`;
     const corFarol = estCorFarolSaldo(pctSaldo);
     row.innerHTML = `
       <div style="min-width:0">
