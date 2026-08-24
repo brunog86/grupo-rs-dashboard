@@ -4819,13 +4819,15 @@ async function syncMetasVendedorParaSupabase(rows) {
 const rpcCache = {};
 function rpcCacheKey(fn, params) { return fn + '::' + JSON.stringify(params); }
 
-async function callRpc(fnName, params, useCache = true) {
+async function callRpc(fnName, params, useCache = true, timeoutMs = 25000) {
   const key = rpcCacheKey(fnName, params);
   if (useCache && rpcCache[key]) return rpcCache[key];
 
-  const TIMEOUT_MS = 25000; // nunca espera mais que 25s por uma chamada
+  // timeoutMs é por chamada (default 25s) — algumas RPCs mais pesadas (ex:
+  // fn_estoque_produto_giro com período largo) recebem um valor maior na
+  // própria chamada, em vez de mudar o padrão global de todas as ~40 RPCs.
   const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error(`Tempo esgotado ao chamar ${fnName}`)), TIMEOUT_MS)
+    setTimeout(() => reject(new Error(`Tempo esgotado ao chamar ${fnName}`)), timeoutMs)
   );
 
   try {
@@ -5143,11 +5145,15 @@ async function buscarEntradaSaidaProduto(dataInicio, dataFim, lojaNome, marca, g
 // — reduzir o número aqui reduz o tempo de consulta de verdade, não só o
 // tamanho da resposta. Ver fn_estoque_produto_giro_unificado.sql.
 async function buscarEstoqueProdutoGiro(dataInicio, dataFim, lojaNome, marca, grupo, diasPonto = 30, limite = 200) {
+  // Timeout maior (45s) que o padrão de callRpc (25s) — período largo +
+  // "Todas as lojas" pode legitimamente levar ~10-15s no banco (confirmado
+  // via EXPLAIN ANALYZE em 24/08/2026); paliativo aceito enquanto a tabela
+  // de resumo mensal não é construída (ver HANDOFF).
   const rows = await callRpc('fn_estoque_produto_giro', {
     p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome),
     p_marca: marca || null, p_grupo: grupo || null,
     p_dias_ponto_pedido: diasPonto, p_limite: limite
-  }, false);
+  }, false, 45000);
   return rows.map(r => ({
     produto: r.produto, marca: r.marca, grupo: r.grupo, barras: r.barras,
     entradaQtd:   parseFloat(r.entrada_qtd) || 0,
