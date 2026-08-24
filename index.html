@@ -1028,32 +1028,9 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 
       <div class="metrics-grid" id="estMetrics"></div>
 
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:20px">
-        <div class="section-title" style="margin:0">Entrada × Saída e Giro/Reposição por produto</div>
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-          <span style="font-size:11px;color:var(--text2);font-weight:600">Mostrar:</span>
-          <input type="number" id="estListaLimite" value="200" min="1" max="9999"
-            style="width:64px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;color:var(--text);font-size:12px;font-family:'Plus Jakarta Sans',sans-serif;text-align:center;outline:none;"
-            onchange="renderEstoqueLeve()">
-          <span style="font-size:11px;color:var(--text2)">produtos</span>
-          <button class="apply-btn" onclick="exportEstoqueGiroPDF()" style="border-color:var(--orange);color:var(--orange);font-size:11px;padding:6px 10px">↓ PDF</button>
-          <button class="apply-btn" onclick="exportEstoqueGiroExcel()" style="border-color:var(--green);color:var(--green);font-size:11px;padding:6px 10px">↓ Excel</button>
-        </div>
-      </div>
-      <div style="font-size:11.5px;color:var(--text3);margin:-4px 0 12px">
-        As colunas de giro/cobertura/reposição consideram só itens com pelo menos uma entrada registrada pela importação de planilha (ver "Importar entrada de estoque" acima), somando todas as lojas do filtro acima — a decisão de compra é do grupo, não por loja — e olham o histórico completo do item (não o período selecionado acima). O filtro "Mostrar" limita a listagem aos N produtos de maior valor de entrada no período; "Repor agora"/"Mais vendidos"/"Encalhados" abaixo filtram dentro desse conjunto — aumente o número se um item que precisa de atenção não aparecer.
-      </div>
-      <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center;">
-        <span class="filter-label">Ponto de pedido (dias de venda):</span>
-        <input type="number" min="1" step="1" value="30" class="date-input" id="estGiroDiasPonto" style="width:80px" onchange="renderEstoqueLeve()">
-        <span style="flex:1"></span>
-        <button class="apply-btn active" id="btnGiroRepor" onclick="setEstGiroModo('repor')">⚠ Repor agora</button>
-        <button class="apply-btn" id="btnGiroMaisVendidos" onclick="setEstGiroModo('maisVendidos')">🔥 Mais vendidos</button>
-        <button class="apply-btn" id="btnGiroEncalhados" onclick="setEstGiroModo('encalhados')">🐌 Encalhados</button>
-        <button class="apply-btn" id="btnGiroTodos" onclick="setEstGiroModo('todos')">Todos</button>
-      </div>
-      <div class="ranking-card" style="overflow-x:auto">
-        <div id="estTabelaList" style="min-width:1360px"></div>
+      <div class="section-title" style="margin-top:20px">Entrada × Saída por produto</div>
+      <div class="ranking-card">
+        <div id="estTabelaList"></div>
       </div>
     </div>
 
@@ -4819,15 +4796,13 @@ async function syncMetasVendedorParaSupabase(rows) {
 const rpcCache = {};
 function rpcCacheKey(fn, params) { return fn + '::' + JSON.stringify(params); }
 
-async function callRpc(fnName, params, useCache = true, timeoutMs = 25000) {
+async function callRpc(fnName, params, useCache = true) {
   const key = rpcCacheKey(fnName, params);
   if (useCache && rpcCache[key]) return rpcCache[key];
 
-  // timeoutMs é por chamada (default 25s) — algumas RPCs mais pesadas (ex:
-  // fn_estoque_produto_giro com período largo) recebem um valor maior na
-  // própria chamada, em vez de mudar o padrão global de todas as ~40 RPCs.
+  const TIMEOUT_MS = 25000; // nunca espera mais que 25s por uma chamada
   const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error(`Tempo esgotado ao chamar ${fnName}`)), timeoutMs)
+    setTimeout(() => reject(new Error(`Tempo esgotado ao chamar ${fnName}`)), TIMEOUT_MS)
   );
 
   try {
@@ -5134,40 +5109,6 @@ async function buscarEntradaSaidaProduto(dataInicio, dataFim, lojaNome, marca, g
     saidaQtd:     parseFloat(r.saida_qtd) || 0,
     saidaValor:   parseFloat(r.saida_valor) || 0,
     saldoQtd:     parseFloat(r.saldo_qtd) || 0,
-  }));
-}
-
-// ── Entrada x Saída + Giro/Cobertura/Reposição — tabela única da aba Estoque
-// (unificação pedida pelo Bruno em 24/08/2026: antes eram 2 RPCs/2 tabelas
-// separadas — fn_entrada_saida_produto + fn_estoque_giro_reposicao, giro por
-// loja. Agora é 1 RPC só, giro por produto (soma as lojas do filtro), com
-// limite de linhas configurável (p_limite) que corta ANTES de calcular giro
-// — reduzir o número aqui reduz o tempo de consulta de verdade, não só o
-// tamanho da resposta. Ver fn_estoque_produto_giro_unificado.sql.
-async function buscarEstoqueProdutoGiro(dataInicio, dataFim, lojaNome, marca, grupo, diasPonto = 30, limite = 200) {
-  // Timeout maior (45s) que o padrão de callRpc (25s) — período largo +
-  // "Todas as lojas" pode legitimamente levar ~10-15s no banco (confirmado
-  // via EXPLAIN ANALYZE em 24/08/2026); paliativo aceito enquanto a tabela
-  // de resumo mensal não é construída (ver HANDOFF).
-  const rows = await callRpc('fn_estoque_produto_giro', {
-    p_data_inicio: dataInicio, p_data_fim: dataFim, p_loja_id: lojaIdPorNome(lojaNome),
-    p_marca: marca || null, p_grupo: grupo || null,
-    p_dias_ponto_pedido: diasPonto, p_limite: limite
-  }, false, 45000);
-  return rows.map(r => ({
-    produto: r.produto, marca: r.marca, grupo: r.grupo, barras: r.barras,
-    entradaQtd:   parseFloat(r.entrada_qtd) || 0,
-    entradaValor: parseFloat(r.entrada_valor) || 0,
-    saidaQtd:     parseFloat(r.saida_qtd) || 0,
-    saidaValor:   parseFloat(r.saida_valor) || 0,
-    saldoQtd:     parseFloat(r.saldo_qtd) || 0,
-    estoqueAtual:      r.estoque_atual === null ? null : parseFloat(r.estoque_atual),
-    vendaMediaDiaria:  r.venda_media_diaria === null ? null : parseFloat(r.venda_media_diaria),
-    coberturaDias:     r.cobertura_dias === null ? null : parseFloat(r.cobertura_dias),
-    pontoPedido:       r.ponto_pedido === null ? null : parseFloat(r.ponto_pedido),
-    sugestaoRepor:     r.sugestao_repor === null ? null : parseFloat(r.sugestao_repor),
-    status:            r.status || null,
-    giroDataInicio:    r.giro_data_inicio || null,
   }));
 }
 
@@ -6637,12 +6578,9 @@ async function renderEstoqueLeve() {
     dataFim = hoje.toISOString().split('T')[0];
   }
 
-  const diasPonto = parseInt(document.getElementById('estGiroDiasPonto')?.value, 10) || 30;
-  const limite    = parseInt(document.getElementById('estListaLimite')?.value, 10) || 200;
-
   const [resumo, produtos, marcas, grupos] = await Promise.all([
     buscarResumoEntradaSaida(dataInicio, dataFim, lojaFil),
-    buscarEstoqueProdutoGiro(dataInicio, dataFim, lojaFil, marcaFil, grupoFil, diasPonto, limite),
+    buscarEntradaSaidaProduto(dataInicio, dataFim, lojaFil, marcaFil, grupoFil, 500),
     buscarRankingMarcas(dataInicio, dataFim, lojaFil, 200, grupoFil),
     buscarRankingGrupos(dataInicio, dataFim, lojaFil, 200),
   ]);
@@ -6673,28 +6611,15 @@ async function renderEstoqueLeve() {
     { label: 'Qtd. saída', value: fmtNum(resumo.saidaQtd) },
   ]);
 
-  estProdutoGiroCache = produtos;
-  aplicarFiltroGiro();
+  renderEstoqueTabela(produtos);
 }
-
-// Colunas: Produto | Entrada qtd/R$ | Saída qtd/R$ | Saldo (período) |
-// Estoque atual/Venda média/Cobertura/Ponto de pedido/Sugestão/Status (giro,
-// histórico completo, "—" para produtos sem código de barras/sem entrada
-// registrada no sistema de planilha).
-const EST_TABELA_GRID_COLS = '220px 90px 100px 90px 100px 90px 100px 100px 90px 100px 110px 90px';
 
 function renderEstoqueTabela(produtos) {
   const listEl = document.getElementById('estTabelaList');
   if (!listEl) return;
 
   if (!produtos.length) {
-    const msgs = {
-      repor: 'Nenhum item precisando de reposição no momento (dentro do limite "Mostrar" configurado acima).',
-      maisVendidos: 'Nenhum item com giro registrado encontrado.',
-      encalhados: 'Nenhum item parado encontrado.',
-      todos: 'Nenhuma entrada ou saída encontrada neste período.',
-    };
-    listEl.innerHTML = `<div class="empty"><div class="empty-icon">📦</div>${msgs[estGiroModoAtual] || msgs.todos}</div>`;
+    listEl.innerHTML = '<div class="empty"><div class="empty-icon">📦</div>Nenhuma entrada ou saída encontrada neste período.</div>';
     return;
   }
 
@@ -6702,8 +6627,8 @@ function renderEstoqueTabela(produtos) {
 
   const header = document.createElement('div');
   header.style.cssText = `
-    display:grid; grid-template-columns: ${EST_TABELA_GRID_COLS}; gap:8px;
-    padding:10px 14px; font-size:10.5px; font-weight:700; color:var(--text2);
+    display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr; gap:10px;
+    padding:10px 14px; font-size:11px; font-weight:700; color:var(--text2);
     text-transform:uppercase; letter-spacing:.03em; border-bottom:1px solid var(--border);
   `;
   header.innerHTML = `
@@ -6712,20 +6637,14 @@ function renderEstoqueTabela(produtos) {
     <div style="text-align:right">Entrada (R$)</div>
     <div style="text-align:right">Saída (qtd)</div>
     <div style="text-align:right">Saída (R$)</div>
-    <div style="text-align:right">Saldo (período)</div>
-    <div style="text-align:right">Estoque atual</div>
-    <div style="text-align:right">Venda média/dia</div>
-    <div style="text-align:right">Cobertura</div>
-    <div style="text-align:right">Ponto de pedido</div>
-    <div style="text-align:right">Sugestão de compra</div>
-    <div style="text-align:right">Status</div>
+    <div style="text-align:right">Saldo (qtd)</div>
   `;
   listEl.appendChild(header);
 
   produtos.forEach((p, i) => {
     const row = document.createElement('div');
     row.style.cssText = `
-      display:grid; grid-template-columns: ${EST_TABELA_GRID_COLS}; gap:8px;
+      display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr; gap:10px;
       padding:9px 14px; align-items:center;
       ${i < produtos.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}
       transition:background 0.15s;
@@ -6733,25 +6652,16 @@ function renderEstoqueTabela(produtos) {
     row.onmouseenter = () => row.style.background = 'var(--bg4)';
     row.onmouseleave = () => row.style.background = '';
     const saldoCor = p.saldoQtd < 0 ? 'var(--red)' : 'var(--text)';
-    const temGiro = p.status !== null && p.status !== undefined;
-    const st = temGiro ? (STATUS_GIRO_LABEL[p.status] || { texto: p.status, cor: 'var(--text2)' }) : null;
-    const coberturaTxt = !temGiro || p.coberturaDias === null ? '—' : `${fmtNum(p.coberturaDias)}d`;
     row.innerHTML = `
       <div style="min-width:0">
-        <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtmlLpub(p.produto || 'Sem descrição')}</div>
-        <div style="font-size:11px;color:var(--text2);margin-top:2px">${escapeHtmlLpub(p.marca)}${p.grupo ? ' · ' + escapeHtmlLpub(p.grupo) : ''}${p.barras ? ' · ' + escapeHtmlLpub(p.barras) : ''}</div>
+        <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.produto || 'Sem descrição'}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${p.marca}${p.grupo ? ' · ' + p.grupo : ''}${p.barras ? ' · ' + p.barras : ''}</div>
       </div>
       <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(p.entradaQtd)}</div>
       <div style="text-align:right;font-size:13px;color:var(--text)">${fmt(p.entradaValor)}</div>
       <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(p.saidaQtd)}</div>
       <div style="text-align:right;font-size:13px;color:var(--text)">${fmt(p.saidaValor)}</div>
       <div style="text-align:right;font-size:13px;font-weight:700;color:${saldoCor}">${fmtNum(p.saldoQtd)}</div>
-      <div style="text-align:right;font-size:13px;font-weight:700;color:${temGiro && p.estoqueAtual <= 0 ? 'var(--red)' : 'var(--text)'}">${temGiro ? fmtNum(p.estoqueAtual) : '—'}</div>
-      <div style="text-align:right;font-size:13px;color:var(--text)">${temGiro ? fmtNum(p.vendaMediaDiaria) : '—'}</div>
-      <div style="text-align:right;font-size:13px;color:var(--text)">${coberturaTxt}</div>
-      <div style="text-align:right;font-size:13px;color:var(--text2)">${temGiro ? fmtNum(p.pontoPedido) : '—'}</div>
-      <div style="text-align:right;font-size:13px;font-weight:700;color:${temGiro && p.sugestaoRepor > 0 ? 'var(--orange)' : 'var(--text2)'}">${temGiro && p.sugestaoRepor > 0 ? fmtNum(p.sugestaoRepor) : '—'}</div>
-      <div style="text-align:right;font-size:11px;font-weight:700;color:${st ? st.cor : 'var(--text3)'}">${st ? st.texto : '—'}</div>
     `;
     listEl.appendChild(row);
   });
@@ -7052,7 +6962,7 @@ async function confirmarImportacaoEstoque() {
     document.getElementById('estImportStatus').textContent = `✓ ${resultado.itens.length} itens importados (${resultado.nomeArquivo})`;
     document.getElementById('estImportStatus').style.color = 'var(--green)';
     fecharEstImportModal();
-    if (document.getElementById('tab-estoque')?.classList.contains('active')) { await renderEstoqueLeve(); }
+    if (document.getElementById('tab-estoque')?.classList.contains('active')) await renderEstoqueLeve();
   } catch (e) {
     console.error('[estoque_entradas] erro ao gravar:', e);
     showToast('Erro ao gravar a entrada de estoque: ' + (e.message || e), 'error');
@@ -7126,221 +7036,6 @@ function limparBuscaBarrasEstoque() {
   document.getElementById('estBuscaBarrasResultado').style.display = 'none';
   document.getElementById('estBuscaBarrasResultado').innerHTML = '';
   document.getElementById('estBuscaBarrasLimparBtn').style.display = 'none';
-}
-
-// ── Giro, cobertura e reposição de estoque — unificado com a tabela de
-// Entrada x Saída (ver buscarEstoqueProdutoGiro/renderEstoqueTabela acima).
-// Os 4 filtros abaixo só reordenam/filtram o cache já carregado em
-// estProdutoGiroCache — não fazem fetch novo.
-let estProdutoGiroCache = [];
-let estGiroModoAtual = 'repor';
-
-const STATUS_GIRO_LABEL = {
-  sem_estoque: { texto: 'Sem estoque',       cor: 'var(--red)'    },
-  repor:       { texto: 'Repor',             cor: 'var(--orange)' },
-  sem_giro:    { texto: 'Sem giro recente',  cor: 'var(--text2)'  },
-  ok:          { texto: 'OK',                cor: 'var(--green)'  },
-};
-
-function setEstGiroModo(modo) {
-  estGiroModoAtual = modo;
-  ['Repor', 'MaisVendidos', 'Encalhados', 'Todos'].forEach(m => {
-    document.getElementById('btnGiro' + m)?.classList.toggle('active', m.toLowerCase() === modo.toLowerCase());
-  });
-  aplicarFiltroGiro();
-}
-
-// Reaplica o filtro/ordenação ativo (Repor agora/Mais vendidos/Encalhados/
-// Todos) sobre o cache já carregado — usado tanto pela tela quanto pelos
-// exports (exportEstoqueGiroPDF/Excel), pra exportar exatamente o que está
-// sendo exibido.
-function getEstoqueGiroFiltradas() {
-  let linhas = estProdutoGiroCache;
-  if (estGiroModoAtual === 'repor') {
-    linhas = linhas.filter(r => r.status === 'repor' || r.status === 'sem_estoque');
-    linhas = [...linhas].sort((a, b) => (a.coberturaDias ?? -1) - (b.coberturaDias ?? -1));
-  } else if (estGiroModoAtual === 'maisVendidos') {
-    linhas = linhas.filter(r => r.status !== null);
-    linhas = [...linhas].sort((a, b) => b.vendaMediaDiaria - a.vendaMediaDiaria);
-  } else if (estGiroModoAtual === 'encalhados') {
-    linhas = linhas.filter(r => r.status === 'sem_giro');
-    linhas = [...linhas].sort((a, b) => b.estoqueAtual - a.estoqueAtual);
-  }
-  // 'todos' — sem filtro/reordenação extra, mantém a ordem já vinda do banco
-  // (maior valor de entrada primeiro).
-  return linhas;
-}
-
-function aplicarFiltroGiro() {
-  renderEstoqueTabela(getEstoqueGiroFiltradas());
-}
-
-// Rótulo do filtro ativo, usado no subtítulo dos exports.
-function estGiroModoLabel() {
-  return { repor: 'Repor agora', maisVendidos: 'Mais vendidos', encalhados: 'Encalhados', todos: 'Todos' }[estGiroModoAtual] || 'Todos';
-}
-
-function exportEstoqueGiroExcel() {
-  const linhas = getEstoqueGiroFiltradas();
-  if (!linhas.length) { showToast('Nenhum dado para exportar.', 'error'); return; }
-
-  const lojaFil = document.getElementById('estLojaFilter')?.value || '';
-  const deM  = document.getElementById('estMesAnoDE')?.value || '';
-  const ateM = document.getElementById('estMesAnoATE')?.value || '';
-  const periodoTxt = estPeriodoTudo ? 'Tudo' : (deM || ateM) ? `${deM || '…'} até ${ateM || '…'}` : 'Últimos 30 dias';
-  const hoje = new Date().toISOString().split('T')[0];
-  const subtitulo = `${lojaFil ? 'Loja: ' + lojaFil : 'Todas as lojas'} · Período: ${periodoTxt} · Filtro: ${estGiroModoLabel()}`;
-
-  const linhasSheet = [
-    ['Entrada × Saída e Giro/Reposição por Produto — Grupo RS'],
-    [subtitulo],
-    [],
-    ['Produto', 'Marca', 'Grupo', 'Código de Barras',
-     'Entrada (qtd)', 'Entrada (R$)', 'Saída (qtd)', 'Saída (R$)', 'Saldo (período)',
-     'Estoque atual', 'Venda média/dia', 'Cobertura (dias)', 'Ponto de pedido', 'Sugestão de compra', 'Status']
-  ];
-  linhas.forEach(p => {
-    const st = p.status !== null ? (STATUS_GIRO_LABEL[p.status]?.texto || p.status) : '—';
-    linhasSheet.push([
-      p.produto || '', p.marca || '', p.grupo || '', p.barras || '',
-      p.entradaQtd, Number(p.entradaValor.toFixed(2)), p.saidaQtd, Number(p.saidaValor.toFixed(2)), p.saldoQtd,
-      p.estoqueAtual === null ? '' : p.estoqueAtual,
-      p.vendaMediaDiaria === null ? '' : p.vendaMediaDiaria,
-      p.coberturaDias === null ? '' : p.coberturaDias,
-      p.pontoPedido === null ? '' : p.pontoPedido,
-      p.sugestaoRepor === null ? '' : p.sugestaoRepor,
-      st
-    ]);
-  });
-
-  const ws = XLSX.utils.aoa_to_sheet(linhasSheet);
-  ws['!cols'] = [{ wch: 40 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 12 }, { wch: 13 }, { wch: 12 }, { wch: 13 }, { wch: 12 }, { wch: 13 }, { wch: 14 }, { wch: 14 }];
-  ws['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 14 } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 14 } }
-  ];
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Estoque e Giro');
-  XLSX.writeFile(wb, `estoque-giro-${hoje}.xlsx`);
-  showToast('Excel gerado!', '');
-}
-
-async function exportEstoqueGiroPDF() {
-  const linhas = getEstoqueGiroFiltradas();
-  if (!linhas.length) { showToast('Nenhum dado para exportar.', 'error'); return; }
-  showToast('Gerando PDF...', '');
-
-  const { jsPDF } = window.jspdf;
-  const lojaFil = document.getElementById('estLojaFilter')?.value || '';
-  const deM  = document.getElementById('estMesAnoDE')?.value || '';
-  const ateM = document.getElementById('estMesAnoATE')?.value || '';
-  const periodoTxt = estPeriodoTudo ? 'Tudo' : (deM || ateM) ? `${deM || '…'} até ${ateM || '…'}` : 'Últimos 30 dias';
-  const hoje    = new Date().toISOString().split('T')[0];
-  const hojeBR  = new Date().toLocaleDateString('pt-BR', { dateStyle: 'long' });
-  const titulo  = 'Entrada × Saída e Giro/Reposição por Produto';
-  const subtitulo = `${lojaFil ? 'Loja: ' + lojaFil : 'Todas as lojas'} · Período: ${periodoTxt} · Filtro: ${estGiroModoLabel()}`;
-
-  const pdf     = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-  const pageW   = pdf.internal.pageSize.getWidth();
-  const pageH   = pdf.internal.pageSize.getHeight();
-  const margin  = 12;
-  const usableW = pageW - margin * 2;
-  // Colunas do PDF (landscape): Produto | Entrada R$ | Saída R$ | Saldo período
-  // | Estoque atual | Venda média/dia | Cobertura | Sugestão | Status.
-  // Qtd de entrada/saída ficam de fora do PDF por espaço — vêm completas no Excel.
-  const colX = { produto: margin + 2, entrada: margin + 110, saida: margin + 145, saldo: margin + 178, estoque: margin + 205, venda: margin + 228, cobertura: margin + 248, sugestao: margin + 262, status: pageW - margin };
-
-  const drawHeader = () => {
-    pdf.setFillColor(28, 32, 48);
-    pdf.rect(0, 0, pageW, 20, 'F');
-    pdf.setFillColor(255, 140, 40);
-    pdf.rect(0, 20, pageW, 1.2, 'F');
-
-    pdf.setFontSize(13); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(244, 246, 255);
-    pdf.text('Grupo RS', margin, 13);
-    pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(155, 165, 192);
-    pdf.text(hojeBR, pageW - margin, 13, { align: 'right' });
-
-    pdf.setFontSize(15); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
-    pdf.text(titulo, margin, 31);
-    pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(90, 100, 128);
-    pdf.text(subtitulo, margin, 37);
-
-    const hy = 45;
-    pdf.setFillColor(247, 248, 252);
-    pdf.rect(margin, hy - 5, usableW, 8, 'F');
-    pdf.setFontSize(7.5); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(107, 117, 148);
-    pdf.text('PRODUTO', colX.produto, hy);
-    pdf.text('ENTR. (R$)', colX.entrada, hy, { align: 'right' });
-    pdf.text('SAÍDA (R$)', colX.saida, hy, { align: 'right' });
-    pdf.text('SALDO', colX.saldo, hy, { align: 'right' });
-    pdf.text('ESTOQUE', colX.estoque, hy, { align: 'right' });
-    pdf.text('VENDA/DIA', colX.venda, hy, { align: 'right' });
-    pdf.text('COBERT.', colX.cobertura, hy, { align: 'right' });
-    pdf.text('SUGESTÃO', colX.sugestao, hy, { align: 'right' });
-    pdf.text('STATUS', colX.status, hy, { align: 'right' });
-  };
-
-  const drawFooter = (pageNum, totalPages) => {
-    pdf.setFontSize(8); pdf.setTextColor(107, 117, 148); pdf.setFont('helvetica', 'normal');
-    pdf.text(`Página ${pageNum} de ${totalPages} · Gerado pelo Dashboard Grupo RS`, pageW / 2, pageH - 6, { align: 'center' });
-  };
-
-  const rowH   = 11;
-  const startY = 51;
-  let y        = startY;
-  let pageNum  = 1;
-
-  drawHeader();
-
-  linhas.forEach((p, i) => {
-    if (y + rowH > pageH - 14) {
-      drawFooter(pageNum, '?');
-      pdf.addPage();
-      pageNum++;
-      drawHeader();
-      y = startY;
-    }
-
-    if (i % 2 === 0) {
-      pdf.setFillColor(247, 248, 252);
-      pdf.rect(margin, y - 5.5, usableW, rowH - 2, 'F');
-    }
-
-    const temGiro = p.status !== null;
-    const st = temGiro ? (STATUS_GIRO_LABEL[p.status] || { texto: p.status, cor: [90, 100, 128] }) : null;
-    const corStatus = !temGiro ? [155, 165, 192] : p.status === 'sem_estoque' ? [220, 38, 38] : p.status === 'repor' ? [230, 126, 34] : p.status === 'ok' ? [5, 150, 105] : [90, 100, 128];
-
-    pdf.setFontSize(8); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
-    const nome = p.produto || 'Sem descrição';
-    const nomeShort = nome.length > 46 ? nome.substring(0, 45) + '…' : nome;
-    pdf.text(nomeShort, colX.produto, y);
-    if (p.marca || p.barras) {
-      pdf.setFontSize(6.5); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(107, 117, 148);
-      pdf.text([p.marca, p.barras].filter(Boolean).join(' · '), colX.produto, y + 3.6);
-    }
-
-    pdf.setFontSize(8); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(15, 21, 35);
-    pdf.text(fmt(p.entradaValor), colX.entrada, y, { align: 'right' });
-    pdf.text(fmt(p.saidaValor), colX.saida, y, { align: 'right' });
-    pdf.text(fmtNum(p.saldoQtd), colX.saldo, y, { align: 'right' });
-    pdf.text(temGiro ? fmtNum(p.estoqueAtual) : '—', colX.estoque, y, { align: 'right' });
-    pdf.text(temGiro ? fmtNum(p.vendaMediaDiaria) : '—', colX.venda, y, { align: 'right' });
-    pdf.text(temGiro && p.coberturaDias !== null ? `${fmtNum(p.coberturaDias)}d` : '—', colX.cobertura, y, { align: 'right' });
-    pdf.text(temGiro && p.sugestaoRepor > 0 ? fmtNum(p.sugestaoRepor) : '—', colX.sugestao, y, { align: 'right' });
-
-    pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...corStatus);
-    pdf.text(st ? st.texto : '—', colX.status, y, { align: 'right' });
-
-    y += rowH;
-  });
-
-  const totalPages = pdf.internal.getNumberOfPages();
-  for (let p = 1; p <= totalPages; p++) { pdf.setPage(p); drawFooter(p, totalPages); }
-
-  pdf.save(`estoque-giro-${hoje}.pdf`);
-  showToast('PDF gerado!', '');
 }
 
 // Exporta em Excel a lista de produtos do painel "Produtos por marca" (o
