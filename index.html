@@ -6757,7 +6757,12 @@ function parseEstoqueEntradaPlanilha(arrayBuffer, nomeArquivo) {
     if (norm === 'barras') idxBarras = idx;
     else if (norm.includes('descri')) idxDescricao = idx;
     else if (norm.includes('quantidade') && norm.includes('unid') && !norm.includes('cx')) idxQtdTotal = idx;
-    else if (norm.includes('valor unit') && norm.includes('nf')) idxValorUnit = idx;
+    // "Custo Compra Unid" é o custo unitário real de aquisição — confirmado
+    // com o Bruno em 24/08/2026 depois de um caso real (item 7900083017847)
+    // em que o valor gravado batia com uma coluna "Valor Unit. NF" (nota
+    // fiscal) bem menor, não com o custo de compra de verdade. Exclui
+    // "total" pra não casar uma eventual coluna "Custo Compra Total".
+    else if (norm.includes('custo compra') && !norm.includes('total')) idxValorUnit = idx;
   });
 
   // Colunas de loja: procura a partir de "Divisão por Loja" (rótulo na linha
