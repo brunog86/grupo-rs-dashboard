@@ -6614,6 +6614,20 @@ async function renderEstoqueLeve() {
   renderEstoqueTabela(produtos);
 }
 
+// % do saldo em relação à quantidade comprada (quanto do que foi comprado
+// ainda está em estoque) + farol — pedido do Bruno em 24/08/2026.
+// < 30% vermelho · 30,0001% a 50% amarelo · acima de 50% verde. Os limites
+// exatos (30 e 50) caem no amarelo, pra não deixar nenhuma faixa sem cor.
+function estPctSaldo(p) {
+  return p.entradaQtd > 0 ? (p.saldoQtd / p.entradaQtd) * 100 : null;
+}
+function estCorFarolSaldo(pct) {
+  if (pct === null) return 'var(--text3)';
+  if (pct < 30) return 'var(--red)';
+  if (pct <= 50) return 'var(--amber)';
+  return 'var(--green)';
+}
+
 function renderEstoqueTabela(produtos) {
   const listEl = document.getElementById('estTabelaList');
   if (!listEl) return;
@@ -6627,7 +6641,7 @@ function renderEstoqueTabela(produtos) {
 
   const header = document.createElement('div');
   header.style.cssText = `
-    display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr; gap:10px;
+    display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr; gap:10px;
     padding:10px 14px; font-size:11px; font-weight:700; color:var(--text2);
     text-transform:uppercase; letter-spacing:.03em; border-bottom:1px solid var(--border);
   `;
@@ -6638,13 +6652,14 @@ function renderEstoqueTabela(produtos) {
     <div style="text-align:right">Saída (qtd)</div>
     <div style="text-align:right">Saída (R$)</div>
     <div style="text-align:right">Saldo (qtd)</div>
+    <div style="text-align:right">% Saldo</div>
   `;
   listEl.appendChild(header);
 
   produtos.forEach((p, i) => {
     const row = document.createElement('div');
     row.style.cssText = `
-      display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr; gap:10px;
+      display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr; gap:10px;
       padding:9px 14px; align-items:center;
       ${i < produtos.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}
       transition:background 0.15s;
@@ -6652,6 +6667,9 @@ function renderEstoqueTabela(produtos) {
     row.onmouseenter = () => row.style.background = 'var(--bg4)';
     row.onmouseleave = () => row.style.background = '';
     const saldoCor = p.saldoQtd < 0 ? 'var(--red)' : 'var(--text)';
+    const pctSaldo = estPctSaldo(p);
+    const pctTxt = pctSaldo === null ? '—' : `${fmtNum(pctSaldo)}%`;
+    const corFarol = estCorFarolSaldo(pctSaldo);
     row.innerHTML = `
       <div style="min-width:0">
         <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.produto || 'Sem descrição'}</div>
@@ -6662,6 +6680,12 @@ function renderEstoqueTabela(produtos) {
       <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(p.saidaQtd)}</div>
       <div style="text-align:right;font-size:13px;color:var(--text)">${fmt(p.saidaValor)}</div>
       <div style="text-align:right;font-size:13px;font-weight:700;color:${saldoCor}">${fmtNum(p.saldoQtd)}</div>
+      <div style="text-align:right;font-size:13px;font-weight:700;color:${saldoCor}">
+        <span style="display:inline-flex;align-items:center;gap:6px">
+          <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${corFarol};flex:none"></span>
+          ${pctTxt}
+        </span>
+      </div>
     `;
     listEl.appendChild(row);
   });
