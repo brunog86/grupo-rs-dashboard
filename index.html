@@ -1028,7 +1028,13 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 
       <div class="metrics-grid" id="estMetrics"></div>
 
-      <div class="section-title" style="margin-top:20px">Entrada × Saída por produto</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:20px">
+        <div class="section-title" style="margin:0">Entrada × Saída por produto</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <button class="apply-btn" onclick="exportEstoqueTabelaPDF()" style="border-color:var(--orange);color:var(--orange);font-size:11px;padding:6px 10px">↓ PDF</button>
+          <button class="apply-btn" onclick="exportEstoqueTabelaExcel()" style="border-color:var(--green);color:var(--green);font-size:11px;padding:6px 10px">↓ Excel</button>
+        </div>
+      </div>
       <div class="ranking-card">
         <div id="estTabelaList"></div>
       </div>
@@ -6466,6 +6472,11 @@ async function populateEstMesSelectoresLeve() {
 // outra mudança de filtro de período desliga essa flag.
 let estPeriodoTudo = false;
 
+// Cache da última lista renderizada em "Entrada × Saída por produto" — usado
+// pelos exports de PDF/Excel (exportEstoqueTabelaPDF/Excel), pra exportar
+// exatamente o que está na tela sem precisar buscar de novo.
+let estTabelaDataCache = [];
+
 function onEstMesChange() {
   estPeriodoTudo = false;
   document.getElementById('estDiaFilter').value = '';
@@ -6614,6 +6625,7 @@ async function renderEstoqueLeve() {
     { label: 'Qtd. saída', value: fmtNum(resumo.saidaQtd) },
   ]);
 
+  estTabelaDataCache = produtos;
   renderEstoqueTabela(produtos);
 }
 
@@ -6692,6 +6704,181 @@ function renderEstoqueTabela(produtos) {
     `;
     listEl.appendChild(row);
   });
+}
+
+// Descrição dos filtros ativos na aba Estoque, usada como subtítulo nos
+// exports (PDF/Excel) da tabela "Entrada × Saída por produto".
+function estFiltrosSubtitulo() {
+  const lojaFil  = document.getElementById('estLojaFilter')?.value || '';
+  const marcaFil = document.getElementById('estMarcaFilter')?.value || '';
+  const grupoFil = document.getElementById('estGrupoFilter')?.value || '';
+  const deM   = document.getElementById('estMesAnoDE')?.value || '';
+  const ateM  = document.getElementById('estMesAnoATE')?.value || '';
+  const diaEsp = document.getElementById('estDiaFilter')?.value || '';
+  const dataDE = document.getElementById('estDataDE')?.value || '';
+  const dataATE = document.getElementById('estDataATE')?.value || '';
+  const fmtDataBR = d => d ? d.split('-').reverse().join('/') : '';
+
+  let periodoTxt;
+  if (estPeriodoTudo) periodoTxt = 'Tudo';
+  else if (diaEsp) periodoTxt = fmtDataBR(diaEsp);
+  else if (dataDE || dataATE) periodoTxt = `${fmtDataBR(dataDE) || '…'} até ${fmtDataBR(dataATE) || '…'}`;
+  else if (deM || ateM) periodoTxt = `${deM || '…'} até ${ateM || '…'}`;
+  else periodoTxt = 'Últimos 30 dias';
+
+  const partes = [
+    lojaFil ? 'Loja: ' + lojaFil : 'Todas as lojas',
+    'Período: ' + periodoTxt,
+  ];
+  if (marcaFil) partes.push('Marca: ' + marcaFil);
+  if (grupoFil) partes.push('Grupo: ' + grupoFil);
+  return partes.join(' · ');
+}
+
+function exportEstoqueTabelaExcel() {
+  const produtos = estTabelaDataCache;
+  if (!produtos.length) { showToast('Nenhum dado para exportar.', 'error'); return; }
+
+  const hoje = new Date().toISOString().split('T')[0];
+  const linhasSheet = [
+    ['Entrada × Saída por Produto — Grupo RS'],
+    [estFiltrosSubtitulo()],
+    [],
+    ['Produto', 'Marca', 'Grupo', 'Código de Barras',
+     'Entrada (qtd)', 'Entrada (R$)', 'Saída (qtd)', 'Saída (R$)', 'Saldo (qtd)', '% Saldo']
+  ];
+  produtos.forEach(p => {
+    const pct = estPctSaldo(p);
+    linhasSheet.push([
+      p.produto || '', p.marca || '', p.grupo || '', p.barras || '',
+      p.entradaQtd, Number(p.entradaValor.toFixed(2)),
+      p.saidaQtd, Number(p.saidaValor.toFixed(2)),
+      p.saldoQtd, pct === null ? '' : Number(pct.toFixed(1))
+    ]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(linhasSheet);
+  ws['!cols'] = [{ wch: 40 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 9 }];
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 9 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 9 } }
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Entrada x Saida');
+  XLSX.writeFile(wb, `estoque-entrada-saida-${hoje}.xlsx`);
+  showToast('Excel gerado!', '');
+}
+
+async function exportEstoqueTabelaPDF() {
+  const produtos = estTabelaDataCache;
+  if (!produtos.length) { showToast('Nenhum dado para exportar.', 'error'); return; }
+  showToast('Gerando PDF...', '');
+
+  const { jsPDF } = window.jspdf;
+  const hoje   = new Date().toISOString().split('T')[0];
+  const hojeBR = new Date().toLocaleDateString('pt-BR', { dateStyle: 'long' });
+  const titulo = 'Entrada × Saída por Produto';
+  const subtitulo = estFiltrosSubtitulo();
+
+  const pdf     = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const pageW   = pdf.internal.pageSize.getWidth();
+  const pageH   = pdf.internal.pageSize.getHeight();
+  const margin  = 12;
+  const usableW = pageW - margin * 2;
+  const colX = { produto: margin + 2, entradaQtd: margin + 130, entradaVal: margin + 165, saidaQtd: margin + 195, saidaVal: margin + 225, saldo: margin + 253, pct: pageW - margin };
+
+  const drawHeader = () => {
+    pdf.setFillColor(28, 32, 48);
+    pdf.rect(0, 0, pageW, 20, 'F');
+    pdf.setFillColor(249, 115, 22);
+    pdf.rect(0, 20, pageW, 1.2, 'F');
+
+    pdf.setFontSize(13); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(244, 246, 255);
+    pdf.text('Grupo RS', margin, 13);
+    pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(155, 165, 192);
+    pdf.text(hojeBR, pageW - margin, 13, { align: 'right' });
+
+    pdf.setFontSize(15); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
+    pdf.text(titulo, margin, 31);
+    pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(90, 100, 128);
+    pdf.text(subtitulo, margin, 37);
+
+    const hy = 45;
+    pdf.setFillColor(247, 248, 252);
+    pdf.rect(margin, hy - 5, usableW, 8, 'F');
+    pdf.setFontSize(7.5); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(107, 117, 148);
+    pdf.text('PRODUTO', colX.produto, hy);
+    pdf.text('ENTR. (QTD)', colX.entradaQtd, hy, { align: 'right' });
+    pdf.text('ENTR. (R$)', colX.entradaVal, hy, { align: 'right' });
+    pdf.text('SAÍDA (QTD)', colX.saidaQtd, hy, { align: 'right' });
+    pdf.text('SAÍDA (R$)', colX.saidaVal, hy, { align: 'right' });
+    pdf.text('SALDO', colX.saldo, hy, { align: 'right' });
+    pdf.text('% SALDO', colX.pct, hy, { align: 'right' });
+  };
+
+  const drawFooter = (pageNum, totalPages) => {
+    pdf.setFontSize(8); pdf.setTextColor(107, 117, 148); pdf.setFont('helvetica', 'normal');
+    pdf.text(`Página ${pageNum} de ${totalPages} · Gerado pelo Dashboard Grupo RS`, pageW / 2, pageH - 6, { align: 'center' });
+  };
+
+  const rowH   = 11;
+  const startY = 51;
+  let y        = startY;
+  let pageNum  = 1;
+
+  drawHeader();
+
+  produtos.forEach((p, i) => {
+    if (y + rowH > pageH - 14) {
+      drawFooter(pageNum, '?');
+      pdf.addPage();
+      pageNum++;
+      drawHeader();
+      y = startY;
+    }
+
+    if (i % 2 === 0) {
+      pdf.setFillColor(247, 248, 252);
+      pdf.rect(margin, y - 5.5, usableW, rowH - 2, 'F');
+    }
+
+    const pct = estPctSaldo(p);
+    const corFarolRGB = pct === null ? [154, 163, 188] : pct < 30 ? [220, 38, 38] : pct <= 50 ? [217, 119, 6] : [5, 150, 105];
+
+    pdf.setFontSize(8); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
+    const nome = p.produto || 'Sem descrição';
+    const nomeShort = nome.length > 58 ? nome.substring(0, 57) + '…' : nome;
+    pdf.text(nomeShort, colX.produto, y);
+    if (p.marca || p.barras) {
+      pdf.setFontSize(6.5); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(107, 117, 148);
+      pdf.text([p.marca, p.grupo, p.barras].filter(Boolean).join(' · '), colX.produto, y + 3.6);
+    }
+
+    pdf.setFontSize(8); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(15, 21, 35);
+    pdf.text(fmtNum(p.entradaQtd), colX.entradaQtd, y, { align: 'right' });
+    pdf.text(fmt(p.entradaValor), colX.entradaVal, y, { align: 'right' });
+    pdf.text(fmtNum(p.saidaQtd), colX.saidaQtd, y, { align: 'right' });
+    pdf.text(fmt(p.saidaValor), colX.saidaVal, y, { align: 'right' });
+
+    pdf.setFont('helvetica', 'bold'); pdf.setTextColor(p.saldoQtd < 0 ? 220 : 15, p.saldoQtd < 0 ? 38 : 21, p.saldoQtd < 0 ? 38 : 35);
+    pdf.text(fmtNum(p.saldoQtd), colX.saldo, y, { align: 'right' });
+
+    const pctTxtPdf = pct === null ? '—' : `${fmtPct1(pct)}%`;
+    pdf.setTextColor(...corFarolRGB);
+    pdf.text(pctTxtPdf, colX.pct, y, { align: 'right' });
+    const pctTxtW = pdf.getTextWidth(pctTxtPdf);
+    pdf.setFillColor(...corFarolRGB);
+    pdf.circle(colX.pct - pctTxtW - 3, y - 1, 1, 'F');
+
+    y += rowH;
+  });
+
+  const totalPages = pdf.internal.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) { pdf.setPage(p); drawFooter(p, totalPages); }
+
+  pdf.save(`estoque-entrada-saida-${hoje}.pdf`);
+  showToast('PDF gerado!', '');
 }
 
 // ════════════════════════════════════════════════════════════════════════════
