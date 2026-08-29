@@ -997,6 +997,12 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
         <select class="date-input" id="estGrupoFilter" style="min-width:180px" onchange="renderEstoqueLeve()">
           <option value="">Todos os grupos</option>
         </select>
+        <span class="filter-label" style="margin-left:8px;">Qtd. exibida:</span>
+        <input type="number" class="date-input" id="estQtdExibidaInput" style="width:70px;text-align:center" min="1" value="50" onchange="renderEstoqueLeve()">
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2);cursor:pointer;user-select:none;margin-left:2px;">
+          <input type="checkbox" id="estQtdExibidaTodos" onchange="onEstQtdExibidaTodosChange()">
+          Mostrar todos
+        </label>
       </div>
 
       <!-- Período específico por dia — alternativa ao filtro por mês acima -->
@@ -1041,6 +1047,45 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
       </div>
       <div class="ranking-card">
         <div id="estTabelaList"></div>
+      </div>
+
+      <!-- Giro, Cobertura e Reposição — por produto, somando todas as lojas
+           permitidas (giro é decisão de compra do grupo, não por loja —
+           confirmado com o Bruno). Sem filtro de loja de propósito. Sem
+           filtro de período: cada produto usa seu próprio baseline (data da
+           primeira entrada conhecida do item), igual à extinta
+           fn_estoque_giro_reposicao — por isso essa tabela não sofre do
+           mesmo timeout do "Tudo" + "Todas as lojas" que afeta a tabela
+           acima. Ver fn_estoque_giro_reposicao_produto.sql. -->
+      <div class="filter-bar" style="margin-top:28px;margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center;">
+        <span class="filter-label">Marca:</span>
+        <select class="date-input" id="estGiroMarcaFilter" style="min-width:180px" onchange="renderEstoqueGiroLeve()">
+          <option value="">Todas as marcas</option>
+        </select>
+        <span class="filter-label" style="margin-left:8px;">Grupo:</span>
+        <select class="date-input" id="estGiroGrupoFilter" style="min-width:180px" onchange="renderEstoqueGiroLeve()">
+          <option value="">Todos os grupos</option>
+        </select>
+        <span class="filter-label" style="margin-left:8px;">Dias ponto de pedido:</span>
+        <input type="number" class="date-input" id="estGiroDiasPontoPedido" style="width:64px;text-align:center" min="1" value="30" onchange="renderEstoqueGiroLeve()">
+        <span class="filter-label" style="margin-left:8px;">Qtd. produtos exibidos:</span>
+        <input type="number" class="date-input" id="estGiroQtdExibida" style="width:70px;text-align:center" min="1" value="200" onchange="renderEstoqueGiroLeve()">
+      </div>
+
+      <div class="month-selector" id="estGiroChips"></div>
+
+      <div class="metrics-grid" id="estGiroMetrics"></div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:20px">
+        <div class="section-title" style="margin:0">🔄 Giro, Cobertura e Reposição</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <button class="apply-btn" onclick="exportEstoqueGiroPDF()" style="border-color:var(--orange);color:var(--orange);font-size:11px;padding:6px 10px">↓ PDF</button>
+          <button class="apply-btn" onclick="exportEstoqueGiroExcel()" style="border-color:var(--green);color:var(--green);font-size:11px;padding:6px 10px">↓ Excel</button>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin:-4px 0 10px">Ordenado por urgência (sem estoque e repor agora aparecem primeiro) · sem filtro de loja — decisão de compra do grupo</div>
+      <div class="ranking-card">
+        <div id="estGiroTabelaList"></div>
       </div>
     </div>
 
@@ -6566,6 +6611,26 @@ function setEstTudo() {
   renderEstoqueLeve();
 }
 
+// Quantidade de produtos exibidos na tabela "Entrada × Saída por produto" —
+// campo editável (pedido do Bruno em 29/08/2026) pra evitar rolagem enorme
+// até a tabela de Giro/Reposição logo abaixo. Default 50 (era 500 fixo).
+// "Mostrar todos" passa null pro p_limite da RPC — o Postgres trata
+// "LIMIT NULL" como "sem limite" (mesmo comportamento de omitir o LIMIT),
+// então não precisou de nenhuma mudança na função fn_entrada_saida_produto.
+function estQtdExibidaValor() {
+  const todos = document.getElementById('estQtdExibidaTodos')?.checked;
+  if (todos) return null;
+  const v = parseInt(document.getElementById('estQtdExibidaInput')?.value, 10);
+  return (Number.isFinite(v) && v > 0) ? v : 50;
+}
+function onEstQtdExibidaTodosChange() {
+  const todos = document.getElementById('estQtdExibidaTodos').checked;
+  const input = document.getElementById('estQtdExibidaInput');
+  input.disabled = todos;
+  input.style.opacity = todos ? '0.5' : '1';
+  renderEstoqueLeve();
+}
+
 async function renderEstoqueLeve() {
   const lojaSel = document.getElementById('estLojaFilter');
   if (lojaSel && !lojaSel.dataset.populated) {
@@ -6611,7 +6676,7 @@ async function renderEstoqueLeve() {
 
   const [resumo, produtos, marcas, grupos] = await Promise.all([
     buscarResumoEntradaSaida(dataInicio, dataFim, lojaFil),
-    buscarEntradaSaidaProduto(dataInicio, dataFim, lojaFil, marcaFil, grupoFil, 500),
+    buscarEntradaSaidaProduto(dataInicio, dataFim, lojaFil, marcaFil, grupoFil, estQtdExibidaValor()),
     buscarRankingMarcas(dataInicio, dataFim, lojaFil, 200, grupoFil),
     buscarRankingGrupos(dataInicio, dataFim, lojaFil, 200),
   ]);
@@ -6895,6 +6960,348 @@ async function exportEstoqueTabelaPDF() {
   for (let p = 1; p <= totalPages; p++) { pdf.setPage(p); drawFooter(p, totalPages); }
 
   pdf.save(`estoque-entrada-saida-${hoje}.pdf`);
+  showToast('PDF gerado!', '');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ABA ESTOQUE — Giro, Cobertura e Reposição (por produto, todas as lojas)
+// ═══════════════════════════════════════════════════════════════════════════
+// Reconstruída em 29/08/2026 como tabela própria, separada da Entrada x
+// Saída (a tentativa anterior de unificar as duas foi abandonada — ver
+// HANDOFF). Sem filtro de loja de propósito (giro é decisão de compra do
+// grupo, não por loja individual — confirmado com o Bruno). Sem filtro de
+// período: cada produto usa seu próprio baseline (data da primeira entrada
+// conhecida do item) — por isso essa consulta nunca sofreu do timeout que
+// afeta o "Tudo" + "Todas as lojas" da tabela Entrada x Saída (não varre
+// produtos_vendidos por uma faixa de datas larga, só por código de barras
+// via índice). RPC: fn_estoque_giro_reposicao_produto — ver
+// fn_estoque_giro_reposicao_produto.sql.
+
+let estGiroDataCache = [];       // último resultado bruto vindo da RPC (respeita Qtd. exibida)
+let estGiroChipAtivo = 'todos';  // 'todos' | 'repor' | 'sem_giro' | 'sem_estoque'
+
+function estGiroCorStatus(status) {
+  if (status === 'sem_estoque') return 'var(--red)';
+  if (status === 'repor')       return 'var(--amber)';
+  if (status === 'sem_giro')    return 'var(--text3)';
+  return 'var(--green)'; // ok
+}
+function estGiroLabelStatus(status) {
+  if (status === 'sem_estoque') return 'Sem estoque';
+  if (status === 'repor')       return 'Repor agora';
+  if (status === 'sem_giro')    return 'Sem giro';
+  return 'OK';
+}
+
+async function buscarEstoqueGiroReposicaoProduto(marca, grupo, diasPontoPedido, limite) {
+  const rows = await callRpc('fn_estoque_giro_reposicao_produto', {
+    p_marca: marca || null, p_grupo: grupo || null,
+    p_dias_ponto_pedido: diasPontoPedido, p_limite: limite
+  }, false);
+  return rows.map(r => ({
+    produto: r.produto, marca: r.marca, grupo: r.grupo, barras: r.barras,
+    estoqueAtual:     parseFloat(r.estoque_atual) || 0,
+    vendaMediaDiaria: parseFloat(r.venda_media_diaria) || 0,
+    coberturaDias:    r.cobertura_dias === null ? null : parseFloat(r.cobertura_dias),
+    pontoPedido:      parseFloat(r.ponto_pedido) || 0,
+    sugestaoRepor:    parseFloat(r.sugestao_repor) || 0,
+    sugestaoValor:    parseFloat(r.sugestao_valor) || 0,
+    status: r.status,
+  }));
+}
+
+function renderEstGiroChips() {
+  const wrap = document.getElementById('estGiroChips');
+  if (!wrap) return;
+  const opcoes = [
+    { chave: 'todos',       label: 'Todos' },
+    { chave: 'repor',       label: 'Repor agora' },
+    { chave: 'sem_giro',    label: 'Encalhados' },
+    { chave: 'sem_estoque', label: 'Sem estoque' },
+  ];
+  wrap.innerHTML = opcoes.map(o =>
+    `<button class="month-btn ${o.chave === estGiroChipAtivo ? 'active' : ''}" onclick="setEstGiroChip('${o.chave}')">${o.label}</button>`
+  ).join('');
+}
+
+// Chips filtram o array já carregado, sem nova consulta.
+function setEstGiroChip(chave) {
+  estGiroChipAtivo = chave;
+  renderEstGiroChips();
+  renderEstoqueGiroTabela(estGiroDataFiltrada());
+}
+
+function estGiroDataFiltrada() {
+  if (estGiroChipAtivo === 'todos') return estGiroDataCache;
+  return estGiroDataCache.filter(p => p.status === estGiroChipAtivo);
+}
+
+async function renderEstoqueGiroLeve() {
+  const marcaSel = document.getElementById('estGiroMarcaFilter');
+  const grupoSel = document.getElementById('estGiroGrupoFilter');
+  // Reaproveita as listas de marca/grupo já carregadas pelos filtros da
+  // tabela Entrada x Saída acima (mesma fonte de dados) — evita uma
+  // consulta extra só pra popular esses selects.
+  if (marcaSel && !marcaSel.dataset.populated) {
+    const origem = document.getElementById('estMarcaFilter');
+    if (origem && origem.options.length > 1) {
+      marcaSel.innerHTML = origem.innerHTML;
+      marcaSel.dataset.populated = '1';
+    }
+  }
+  if (grupoSel && !grupoSel.dataset.populated) {
+    const origem = document.getElementById('estGrupoFilter');
+    if (origem && origem.options.length > 1) {
+      grupoSel.innerHTML = origem.innerHTML;
+      grupoSel.dataset.populated = '1';
+    }
+  }
+
+  const marcaFil = marcaSel?.value || null;
+  const grupoFil = grupoSel?.value || null;
+  const diasPontoPedido = parseInt(document.getElementById('estGiroDiasPontoPedido')?.value, 10) || 30;
+  const qtdInput = parseInt(document.getElementById('estGiroQtdExibida')?.value, 10);
+  const limite = (Number.isFinite(qtdInput) && qtdInput > 0) ? qtdInput : 200;
+
+  const produtos = await buscarEstoqueGiroReposicaoProduto(marcaFil, grupoFil, diasPontoPedido, limite);
+  estGiroDataCache = produtos;
+
+  const semEstoque = produtos.filter(p => p.status === 'sem_estoque').length;
+  const repor      = produtos.filter(p => p.status === 'repor').length;
+  const ok         = produtos.filter(p => p.status === 'ok').length;
+  const valorSugerido = produtos.reduce((soma, p) => soma + (p.sugestaoValor || 0), 0);
+
+  makeMetrics(document.getElementById('estGiroMetrics'), [
+    { label: 'Sem estoque', value: fmtNum(semEstoque) },
+    { label: 'Repor agora', value: fmtNum(repor) },
+    { label: 'OK', value: fmtNum(ok) },
+    { label: 'Sugestão de compra', value: fmt(valorSugerido) },
+  ]);
+
+  renderEstGiroChips();
+  renderEstoqueGiroTabela(estGiroDataFiltrada());
+}
+
+function renderEstoqueGiroTabela(produtos) {
+  const listEl = document.getElementById('estGiroTabelaList');
+  if (!listEl) return;
+
+  if (!produtos.length) {
+    listEl.innerHTML = '<div class="empty"><div class="empty-icon">🔄</div>Nenhum produto encontrado com esses filtros.</div>';
+    return;
+  }
+
+  listEl.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.style.cssText = `
+    display:grid; grid-template-columns: 2.2fr 1fr 1fr 1fr 1fr 1fr 1.1fr; gap:10px;
+    padding:10px 14px; font-size:11px; font-weight:700; color:var(--text2);
+    text-transform:uppercase; letter-spacing:.03em; border-bottom:1px solid var(--border);
+  `;
+  header.innerHTML = `
+    <div>Produto</div>
+    <div style="text-align:right">Estoque atual</div>
+    <div style="text-align:right">Venda média/dia</div>
+    <div style="text-align:right">Cobertura (dias)</div>
+    <div style="text-align:right">Ponto de pedido</div>
+    <div style="text-align:right">Sugestão repor</div>
+    <div style="text-align:right">Status</div>
+  `;
+  listEl.appendChild(header);
+
+  produtos.forEach((p, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = `
+      display:grid; grid-template-columns: 2.2fr 1fr 1fr 1fr 1fr 1fr 1.1fr; gap:10px;
+      padding:9px 14px; align-items:center;
+      ${i < produtos.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}
+      transition:background 0.15s;
+    `;
+    row.onmouseenter = () => row.style.background = 'var(--bg4)';
+    row.onmouseleave = () => row.style.background = '';
+    const cor = estGiroCorStatus(p.status);
+    const coberturaTxt = p.coberturaDias === null ? '—' : fmtNum(p.coberturaDias);
+    row.innerHTML = `
+      <div style="min-width:0">
+        <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.produto || 'Sem descrição'}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${p.marca}${p.grupo ? ' · ' + p.grupo : ''}${p.barras ? ' · ' + p.barras : ''}</div>
+      </div>
+      <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(p.estoqueAtual)}</div>
+      <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(p.vendaMediaDiaria)}</div>
+      <div style="text-align:right;font-size:13px;font-weight:700;color:${cor}">${coberturaTxt}</div>
+      <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(p.pontoPedido)}</div>
+      <div style="text-align:right;font-size:13px;color:var(--text)">${fmtNum(p.sugestaoRepor)}</div>
+      <div style="text-align:right;font-size:13px;font-weight:700;color:${cor}">
+        <span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end;width:100%">
+          <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${cor};flex:none"></span>
+          ${estGiroLabelStatus(p.status)}
+        </span>
+      </div>
+    `;
+    listEl.appendChild(row);
+  });
+}
+
+// Descrição dos filtros ativos, usada como subtítulo nos exports (PDF/Excel)
+// da tabela de Giro/Reposição.
+function estGiroFiltrosSubtitulo() {
+  const marcaFil = document.getElementById('estGiroMarcaFilter')?.value || '';
+  const grupoFil = document.getElementById('estGiroGrupoFilter')?.value || '';
+  const dias = document.getElementById('estGiroDiasPontoPedido')?.value || '30';
+  const partes = ['Todas as lojas (giro do grupo)', `Ponto de pedido: ${dias} dias`];
+  if (marcaFil) partes.push('Marca: ' + marcaFil);
+  if (grupoFil) partes.push('Grupo: ' + grupoFil);
+  if (estGiroChipAtivo !== 'todos') partes.push('Filtro: ' + estGiroLabelStatus(estGiroChipAtivo));
+  return partes.join(' · ');
+}
+
+function exportEstoqueGiroExcel() {
+  const produtos = estGiroDataFiltrada();
+  if (!produtos.length) { showToast('Nenhum dado para exportar.', 'error'); return; }
+
+  const hoje = new Date().toISOString().split('T')[0];
+  const linhasSheet = [
+    ['Giro, Cobertura e Reposição — Grupo RS'],
+    [estGiroFiltrosSubtitulo()],
+    [],
+    ['Produto', 'Marca', 'Grupo', 'Código de Barras', 'Estoque atual',
+     'Venda média/dia', 'Cobertura (dias)', 'Ponto de pedido', 'Sugestão repor', 'Status']
+  ];
+  produtos.forEach(p => {
+    linhasSheet.push([
+      p.produto || '', p.marca || '', p.grupo || '', p.barras || '',
+      p.estoqueAtual, p.vendaMediaDiaria,
+      p.coberturaDias === null ? '' : p.coberturaDias,
+      p.pontoPedido, p.sugestaoRepor,
+      estGiroLabelStatus(p.status)
+    ]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(linhasSheet);
+  ws['!cols'] = [{ wch: 40 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 13 }, { wch: 13 }];
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 9 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 9 } }
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Giro Reposicao');
+  XLSX.writeFile(wb, `estoque-giro-reposicao-${hoje}.xlsx`);
+  showToast('Excel gerado!', '');
+}
+
+async function exportEstoqueGiroPDF() {
+  const produtos = estGiroDataFiltrada();
+  if (!produtos.length) { showToast('Nenhum dado para exportar.', 'error'); return; }
+  showToast('Gerando PDF...', '');
+
+  const { jsPDF } = window.jspdf;
+  const hoje   = new Date().toISOString().split('T')[0];
+  const hojeBR = new Date().toLocaleDateString('pt-BR', { dateStyle: 'long' });
+  const titulo = 'Giro, Cobertura e Reposição';
+  const subtitulo = estGiroFiltrosSubtitulo();
+
+  const pdf     = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const pageW   = pdf.internal.pageSize.getWidth();
+  const pageH   = pdf.internal.pageSize.getHeight();
+  const margin  = 12;
+  const usableW = pageW - margin * 2;
+  const colX = { produto: margin + 2, estoque: margin + 130, vendaMedia: margin + 165, cobertura: margin + 195, pontoPedido: margin + 225, sugestao: margin + 253, status: pageW - margin };
+
+  const drawHeader = () => {
+    pdf.setFillColor(28, 32, 48);
+    pdf.rect(0, 0, pageW, 20, 'F');
+    pdf.setFillColor(249, 115, 22);
+    pdf.rect(0, 20, pageW, 1.2, 'F');
+
+    pdf.setFontSize(13); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(244, 246, 255);
+    pdf.text('Grupo RS', margin, 13);
+    pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(155, 165, 192);
+    pdf.text(hojeBR, pageW - margin, 13, { align: 'right' });
+
+    pdf.setFontSize(15); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
+    pdf.text(titulo, margin, 31);
+    pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(90, 100, 128);
+    pdf.text(subtitulo, margin, 37);
+
+    const hy = 45;
+    pdf.setFillColor(247, 248, 252);
+    pdf.rect(margin, hy - 5, usableW, 8, 'F');
+    pdf.setFontSize(7.5); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(107, 117, 148);
+    pdf.text('PRODUTO', colX.produto, hy);
+    pdf.text('ESTOQUE', colX.estoque, hy, { align: 'right' });
+    pdf.text('VENDA MÉD./DIA', colX.vendaMedia, hy, { align: 'right' });
+    pdf.text('COBERTURA', colX.cobertura, hy, { align: 'right' });
+    pdf.text('PONTO PEDIDO', colX.pontoPedido, hy, { align: 'right' });
+    pdf.text('SUGESTÃO', colX.sugestao, hy, { align: 'right' });
+    pdf.text('STATUS', colX.status, hy, { align: 'right' });
+  };
+
+  const drawFooter = (pageNum, totalPages) => {
+    pdf.setFontSize(8); pdf.setTextColor(107, 117, 148); pdf.setFont('helvetica', 'normal');
+    pdf.text(`Página ${pageNum} de ${totalPages} · Gerado pelo Dashboard Grupo RS`, pageW / 2, pageH - 6, { align: 'center' });
+  };
+
+  const corRGB = { 'var(--red)': [220,38,38], 'var(--amber)': [217,119,6], 'var(--green)': [5,150,105], 'var(--text3)': [154,163,188] };
+
+  const rowH   = 11;
+  const startY = 51;
+  let y        = startY;
+  let pageNum  = 1;
+
+  drawHeader();
+
+  produtos.forEach((p, i) => {
+    if (y + rowH > pageH - 14) {
+      drawFooter(pageNum, '?');
+      pdf.addPage();
+      pageNum++;
+      drawHeader();
+      y = startY;
+    }
+
+    if (i % 2 === 0) {
+      pdf.setFillColor(247, 248, 252);
+      pdf.rect(margin, y - 5.5, usableW, rowH - 2, 'F');
+    }
+
+    const corRGBLinha = corRGB[estGiroCorStatus(p.status)];
+
+    pdf.setFontSize(8); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
+    const nome = p.produto || 'Sem descrição';
+    const nomeShort = nome.length > 50 ? nome.substring(0, 49) + '…' : nome;
+    pdf.text(nomeShort, colX.produto, y);
+    if (p.marca || p.barras) {
+      pdf.setFontSize(6.5); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(107, 117, 148);
+      pdf.text([p.marca, p.grupo, p.barras].filter(Boolean).join(' · '), colX.produto, y + 3.6);
+    }
+
+    pdf.setFontSize(8); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(15, 21, 35);
+    pdf.text(fmtNum(p.estoqueAtual), colX.estoque, y, { align: 'right' });
+    pdf.text(fmtNum(p.vendaMediaDiaria), colX.vendaMedia, y, { align: 'right' });
+
+    pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...corRGBLinha);
+    pdf.text(p.coberturaDias === null ? '—' : fmtNum(p.coberturaDias), colX.cobertura, y, { align: 'right' });
+
+    pdf.setFont('helvetica', 'normal'); pdf.setTextColor(15, 21, 35);
+    pdf.text(fmtNum(p.pontoPedido), colX.pontoPedido, y, { align: 'right' });
+    pdf.text(fmtNum(p.sugestaoRepor), colX.sugestao, y, { align: 'right' });
+
+    const statusTxt = estGiroLabelStatus(p.status);
+    pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...corRGBLinha);
+    pdf.text(statusTxt, colX.status, y, { align: 'right' });
+    const statusTxtW = pdf.getTextWidth(statusTxt);
+    pdf.setFillColor(...corRGBLinha);
+    pdf.circle(colX.status - statusTxtW - 3, y - 1, 1, 'F');
+
+    y += rowH;
+  });
+
+  const totalPages = pdf.internal.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) { pdf.setPage(p); drawFooter(p, totalPages); }
+
+  pdf.save(`estoque-giro-reposicao-${hoje}.pdf`);
   showToast('PDF gerado!', '');
 }
 
@@ -7228,7 +7635,7 @@ async function confirmarImportacaoEstoque() {
     document.getElementById('estImportStatus').textContent = `✓ ${resultado.itens.length} itens importados (${resultado.nomeArquivo})`;
     document.getElementById('estImportStatus').style.color = 'var(--green)';
     fecharEstImportModal();
-    if (document.getElementById('tab-estoque')?.classList.contains('active')) await renderEstoqueLeve();
+    if (document.getElementById('tab-estoque')?.classList.contains('active')) { await renderEstoqueLeve(); await renderEstoqueGiroLeve(); }
   } catch (e) {
     console.error('[estoque_entradas] erro ao gravar:', e);
     showToast('Erro ao gravar a entrada de estoque: ' + (e.message || e), 'error');
@@ -10294,7 +10701,7 @@ function switchTab(name, btn) {
   if (name === 'mensal')      renderMensalLeve();
   if (name === 'vendedores')  renderVendedoresLeve();
   if (name === 'produtos')    { populateProdMesSelectoresLeve().then(() => renderProdutosLeve()); }
-  if (name === 'estoque')     { populateEstMesSelectoresLeve(); renderEstoqueLeve(); }
+  if (name === 'estoque')     { populateEstMesSelectoresLeve(); renderEstoqueLeve(); renderEstoqueGiroLeve(); }
   if (name === 'financeiro')  { populateFinMesFilter(); renderFinanceiroLeve(); }
   if (name === 'pagamentos')  renderPagamentosLeve();
   if (name === 'analise')     renderAnaliseLeve();
