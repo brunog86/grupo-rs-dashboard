@@ -879,11 +879,11 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
 
         <!-- Gráficos gerais -->
         <div class="charts-grid">
-          <div class="chart-card full">
+          <div class="chart-card">
             <div class="chart-title">Top 15 produtos — faturamento</div>
             <div class="chart-wrap tall"><canvas id="chartProdFat"></canvas></div>
           </div>
-          <div class="chart-card full">
+          <div class="chart-card">
             <div class="chart-title">Top 15 produtos — quantidade vendida</div>
             <div class="chart-wrap tall"><canvas id="chartProdQty"></canvas></div>
           </div>
@@ -894,6 +894,10 @@ body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta San
           <div class="chart-card">
             <div class="chart-title">Participação por marca — qtd</div>
             <div class="chart-wrap"><canvas id="chartMarcaQty"></canvas></div>
+          </div>
+          <div class="chart-card full">
+            <div class="chart-title">Faturamento por grupo</div>
+            <div class="chart-wrap tall"><canvas id="chartGrupoFat"></canvas></div>
           </div>
           <div class="chart-card full">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
@@ -6050,7 +6054,7 @@ async function renderProdutosLeve() {
     { label: 'Marcas distintas', value: lastSortedMarca.length }
   ]);
 
-  destroyChart('prodFat'); destroyChart('prodQty'); destroyChart('marcaFat'); destroyChart('marcaQty');
+  destroyChart('prodFat'); destroyChart('prodQty'); destroyChart('marcaFat'); destroyChart('marcaQty'); destroyChart('grupoFat');
 
   const top15Fat = lastSortedProd.slice(0,15);
   const top15Qty = [...lastSortedProd].sort((a,b) => b[1].qty - a[1].qty).slice(0,15);
@@ -6082,6 +6086,19 @@ async function renderProdutosLeve() {
     type: 'doughnut',
     data: { labels: lastSortedMarca.map(([n]) => n), datasets: [{ data: lastSortedMarca.map(([,d]) => d.qty), backgroundColor: marcaColors.map(c=>c+'BB'), borderWidth:0, hoverOffset:8 }] },
     options: { plugins: { legend: { display:true, position:'bottom', labels:{ color:'#8B90A4', font:{ family:'DM Sans', size:11 }, padding:10, boxWidth:10 } }, tooltip: chartDefaults.plugins.tooltip }, cutout:'60%' }
+  });
+
+  // Faturamento por grupo — reaproveita `grupos` (já buscado acima junto com
+  // produtos/marcas/total, sem RPC extra), ordenado por faturamento desc.
+  // Top 15 pra manter o gráfico legível quando o grupo é bem fragmentado;
+  // 'SEM GRUPO' entra normalmente na ordenação (não é escondido nem forçado
+  // pro fim, diferente do <select> de filtro).
+  const gruposOrdenadosFat = [...grupos].sort((a,b) => b.fat - a.fat).slice(0,15);
+  const ctxGF = document.getElementById('chartGrupoFat').getContext('2d');
+  charts['grupoFat'] = new Chart(ctxGF, {
+    type: 'bar',
+    data: { labels: gruposOrdenadosFat.map(g => g.grupo.length>32?g.grupo.substring(0,30)+'…':g.grupo), datasets: [{ data: gruposOrdenadosFat.map(g => g.fat), backgroundColor: '#9B6FFF', borderRadius: 5, borderSkipped: false }] },
+    options: { indexAxis:'y', ...chartDefaults, scales: { x: { ...chartDefaults.scales.x, ticks: { ...chartDefaults.scales.x.ticks, callback: v => fmtK(v) } }, y: { ticks: { color:'#8B90A4', font:{ family:'DM Sans', size:11 } }, grid:{ display:false } } } }
   });
 
   const btnP = document.getElementById('btnVerTodosProd');
