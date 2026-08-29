@@ -10701,7 +10701,7 @@ function switchTab(name, btn) {
   if (name === 'mensal')      renderMensalLeve();
   if (name === 'vendedores')  renderVendedoresLeve();
   if (name === 'produtos')    { populateProdMesSelectoresLeve().then(() => renderProdutosLeve()); }
-  if (name === 'estoque')     { populateEstMesSelectoresLeve(); renderEstoqueLeve(); renderEstoqueGiroLeve(); }
+  if (name === 'estoque')     { populateEstMesSelectoresLeve(); renderEstoqueLeve().then(renderEstoqueGiroLeve); }
   if (name === 'financeiro')  { populateFinMesFilter(); renderFinanceiroLeve(); }
   if (name === 'pagamentos')  renderPagamentosLeve();
   if (name === 'analise')     renderAnaliseLeve();
