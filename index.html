@@ -7775,16 +7775,14 @@ async function exportFornecedorPDF() {
   const marca = document.getElementById('prodPorMarcaTitulo').textContent;
   const stats = document.getElementById('prodPorMarcaStats').textContent;
 
-  // Build sorted by qty data
-  const rows = getFilteredProdRows().filter(r => r.marca === marca);
-  if (!rows.length) { showToast('Nenhum dado para exportar.', 'error'); return; }
-
-  const byProd = {};
-  rows.forEach(r => {
-    if (!byProd[r.produto]) byProd[r.produto] = { qty: 0 };
-    byProd[r.produto].qty += (r.quantidade || 1);
-  });
-  const sorted = Object.entries(byProd).sort((a,b) => b[1].qty - a[1].qty);
+  // Mesma fonte de dados do Excel (lastSortedProdPorMarca, populada pela
+  // versão "leve" via RPC) — antes usava getFilteredProdRows(), um array
+  // local que fica sempre vazio agora que os dados vêm do banco, e por
+  // isso o PDF Fornecedor sempre dizia "Nenhum dado para exportar".
+  // Reordena por quantidade (relatório de fornecedor é por unidades
+  // vendidas, não por faturamento).
+  if (!lastSortedProdPorMarca || !lastSortedProdPorMarca.length) { showToast('Nenhum dado para exportar.', 'error'); return; }
+  const sorted = [...lastSortedProdPorMarca].sort((a,b) => b[1].qty - a[1].qty);
   const totalQty = sorted.reduce((s,[,d]) => s + d.qty, 0);
 
   showToast('Gerando PDF Fornecedor...', '');
