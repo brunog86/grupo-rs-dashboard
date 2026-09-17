@@ -2722,6 +2722,7 @@ async function renderDiarioLeve() {
 // dateFilter e tem filtro de loja próprio (detalheLojaFilter).
 let detalheVendasCache = [];
 let detalheVendasOrdenacao = 'horario'; // 'horario' | 'valor'
+let detalheVendasHoraDirecao = 'asc'; // 'asc' | 'desc' — direção da ordenação por horário
 let detalheVendasLojaFil = '';
 
 let vendMensalModo = 'agrupado'; // 'agrupado' | 'empilhado' — gráfico "Faturamento mensal por vendedor"
@@ -2744,7 +2745,14 @@ async function renderDetalheVendas() {
 // Troca o critério de ordenação (chamado pelos botões) e re-renderiza a
 // lista já carregada em cache, sem precisar buscar de novo no servidor.
 function setDetalheOrdenacao(tipo) {
+  // Clicar em "Horário" quando ele já é o critério ativo inverte a direção
+  // (crescente/decrescente) em vez de não fazer nada.
+  if (tipo === 'horario' && detalheVendasOrdenacao === 'horario') {
+    detalheVendasHoraDirecao = detalheVendasHoraDirecao === 'asc' ? 'desc' : 'asc';
+  }
   detalheVendasOrdenacao = tipo;
+  const btnHora = document.getElementById('detalheSortHora');
+  if (btnHora) btnHora.innerHTML = detalheVendasHoraDirecao === 'asc' ? '🕐 Horário ↑' : '🕐 Horário ↓';
   document.getElementById('detalheSortHora')?.classList.toggle('active', tipo === 'horario');
   document.getElementById('detalheSortValor')?.classList.toggle('active', tipo === 'valor');
   renderDetalheVendasList();
@@ -2756,7 +2764,8 @@ function renderDetalheVendasList() {
 
   const vendas = [...detalheVendasCache].sort((a, b) => {
     if (detalheVendasOrdenacao === 'valor') return b.valor - a.valor;
-    return (a.hora || '').localeCompare(b.hora || '');
+    const cmp = (a.hora || '').localeCompare(b.hora || '');
+    return detalheVendasHoraDirecao === 'asc' ? cmp : -cmp;
   });
 
   if (!vendas.length) {
