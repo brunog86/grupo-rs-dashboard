@@ -5327,10 +5327,15 @@ async function buscarResumoFinanceiro(lojaNome, de = null, ate = null) {
 
 // ── Lista paginada de lançamentos financeiros ───────────────────────────────
 async function buscarListaFinanceiro(tipo, opts = {}) {
+  // opts.limite === null (explícito) significa "sem limite" — mesmo padrão
+  // já usado no "Mostrar tudo" da aba Estoque (passa null pro p_limite da
+  // RPC, e o Postgres trata LIMIT NULL como sem limite). Se opts.limite nem
+  // for informado (undefined), mantém o padrão antigo de 200.
+  const limiteEfetivo = opts.limite === undefined ? 200 : opts.limite;
   const rows = await callRpc('fn_lista_financeiro', {
     p_tipo: tipo, p_loja_id: lojaIdPorNome(opts.loja), p_data_inicio: opts.de || null,
     p_data_fim: opts.ate || null, p_situacao: opts.situacao || null,
-    p_fornecedor: opts.fornecedor || null, p_limite: opts.limite || 200, p_offset: opts.offset || 0
+    p_fornecedor: opts.fornecedor || null, p_limite: limiteEfetivo, p_offset: opts.offset || 0
   }, false);
   return rows.map(r => ({
     loja: r.loja_nome, emissao: r.emissao, situacao: r.situacao, categoria: r.categoria,
@@ -8510,8 +8515,8 @@ async function renderFinanceiroLeve() {
 
   const tF = performance.now();
   const [pagarRaw, receberRaw, resumoFin] = await Promise.all([
-    buscarListaFinanceiro('pagar',   { loja: pagarLojaFil,   de: dataIni, ate: dataFimEf, situacao: statusFil, fornecedor: fornFil, limite: 2000 }),
-    buscarListaFinanceiro('receber', { loja: receberLojaFil, de: dataIni, ate: dataFimEf, situacao: statusFil, fornecedor: fornFil, limite: 2000 }),
+    buscarListaFinanceiro('pagar',   { loja: pagarLojaFil,   de: dataIni, ate: dataFimEf, situacao: statusFil, fornecedor: fornFil, limite: null }),
+    buscarListaFinanceiro('receber', { loja: receberLojaFil, de: dataIni, ate: dataFimEf, situacao: statusFil, fornecedor: fornFil, limite: null }),
     // Resumo usa o mesmo período do filtro — quando sem período, retorna o total completo
     buscarResumoFinanceiro(pagarLojaFil || '', dataIni || null, dataFimEf || null),
   ]);
