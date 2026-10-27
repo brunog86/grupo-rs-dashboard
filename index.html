@@ -7914,18 +7914,24 @@ async function exportMarcaExcel() {
   // Uma aba extra por loja que teve venda desta marca no período — mesma
   // informação que já aparece ao clicar num produto no dashboard (detalhe
   // por loja), só que agora completa, com todos os produtos daquela loja.
+  // Usa a mesma função (buscarRankingProdutos) já usada pra montar a aba
+  // Geral acima, só que escopada a cada loja — evita depender de uma RPC
+  // separada (fn_marca_por_loja) que não estava retornando as lojas certas.
+  let abasPorLojaFalharam = false;
   try {
-    const lojasComVenda = await buscarMarcaPorLoja(marca, dataInicio, dataFim, lojaFil);
-    for (const l of lojasComVenda) {
-      const produtosLoja = await buscarRankingProdutos(dataInicio, dataFim, l.loja, marca, 500);
+    const nomesLojasParaChecar = lojaFil ? [lojaFil] : todasLojasCadastro.map(l => l.nome);
+    for (const nomeLoja of nomesLojasParaChecar) {
+      const produtosLoja = await buscarRankingProdutos(dataInicio, dataFim, nomeLoja, marca, 500);
       if (!produtosLoja.length) continue;
       const sortedLoja = produtosLoja.map(p => [p.produto, { fat: p.fat, qty: p.qty, marca: p.marca, barras: p.barras }]);
-      const nomeAba = sanitizeNomeAbaExcel(l.loja, nomesUsados);
-      XLSX.utils.book_append_sheet(wb, montarAba(sortedLoja, `Produtos — ${marca} — ${l.loja}`), nomeAba);
+      const nomeAba = sanitizeNomeAbaExcel(nomeLoja, nomesUsados);
+      XLSX.utils.book_append_sheet(wb, montarAba(sortedLoja, `Produtos — ${marca} — ${nomeLoja}`), nomeAba);
     }
   } catch (e) {
+    abasPorLojaFalharam = true;
     console.error('Erro ao montar abas por loja no Excel de Produtos & Marcas:', e);
   }
+  if (abasPorLojaFalharam) showToast('Excel gerado, mas sem as abas por loja (erro ao buscar). Veja o console.', 'error');
 
   const hoje = new Date().toISOString().split('T')[0];
   XLSX.writeFile(wb, `produtos-${marca.replace(/\s+/g, '_')}-${hoje}.xlsx`);
