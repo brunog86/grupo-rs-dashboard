@@ -8959,36 +8959,55 @@ async function exportFinPDF(tipo) {
   const ordenados = [...dados].sort((a, b) => (a.dtVenc || a.emissao || '').localeCompare(b.dtVenc || b.emissao || ''));
   const totalGeral = ordenados.reduce((s, r) => s + (r.valorDoc || 0), 0);
 
-  const pdf     = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  // Paisagem: precisa de largura para mostrar os mesmos campos do detalhamento da tela / Excel
+  const pdf     = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageW   = pdf.internal.pageSize.getWidth();
   const pageH   = pdf.internal.pageSize.getHeight();
-  const margin  = 14;
+  const margin  = 12;
   const usableW = pageW - margin * 2;
+
+  // Colunas: mesmos campos do Excel (largura em mm, soma = usableW)
+  const cols = [
+    { key: 'venc',  titulo: 'VENCIMENTO',  w: 20 },
+    { key: 'doc',   titulo: 'NRO DOC',     w: 24 },
+    { key: 'tipo',  titulo: 'TIPO',        w: 11 },
+    { key: 'forn',  titulo: 'FORNECEDOR',  w: 52 },
+    { key: 'cat',   titulo: 'CATEGORIA',   w: 32 },
+    { key: 'obs',   titulo: 'OBSERVAÇÃO',  w: 58 },
+    { key: 'loja',  titulo: 'LOJA',        w: 26 },
+    { key: 'sit',   titulo: 'SITUAÇÃO',    w: 20 },
+    { key: 'valor', titulo: 'VALOR (R$)',  w: 0 }
+  ];
+  cols[cols.length - 1].w = usableW - cols.slice(0, -1).reduce((s, c) => s + c.w, 0);
+  let acc = margin;
+  cols.forEach(c => { c.x = acc; acc += c.w; });
+  const pad = 1.5;
 
   const drawHeader = () => {
     pdf.setFillColor(28, 32, 48);
-    pdf.rect(0, 0, pageW, 22, 'F');
+    pdf.rect(0, 0, pageW, 18, 'F');
     pdf.setFillColor(...corTema);
-    pdf.rect(0, 22, pageW, 1.2, 'F');
+    pdf.rect(0, 18, pageW, 1.2, 'F');
 
     pdf.setFontSize(13); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(244, 246, 255);
-    pdf.text('Grupo RS', margin, 14);
+    pdf.text('Grupo RS', margin, 12);
     pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(155, 165, 192);
-    pdf.text(hojeBR, pageW - margin, 14, { align: 'right' });
+    pdf.text(hojeBR, pageW - margin, 12, { align: 'right' });
 
-    pdf.setFontSize(18); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
-    pdf.text(titulo, margin, 34);
-    pdf.setFontSize(10); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(90, 100, 128);
-    pdf.text(subtitulo, margin, 41);
+    pdf.setFontSize(16); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
+    pdf.text(titulo, margin, 28);
+    pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(90, 100, 128);
+    const subLinhas = pdf.splitTextToSize(subtitulo, usableW);
+    pdf.text(subLinhas.slice(0, 2), margin, 34);
 
-    const hy = 50;
+    const hy = 44;
     pdf.setFillColor(247, 248, 252);
     pdf.rect(margin, hy - 5, usableW, 8, 'F');
-    pdf.setFontSize(8); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(107, 117, 148);
-    pdf.text('VENCIMENTO',  margin + 2, hy);
-    pdf.text('FORNECEDOR / HISTÓRICO', margin + 32, hy);
-    pdf.text('SITUAÇÃO', pageW - margin - 40, hy, { align: 'right' });
-    pdf.text('VALOR (R$)', pageW - margin, hy, { align: 'right' });
+    pdf.setFontSize(7.5); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(107, 117, 148);
+    cols.forEach(c => {
+      if (c.key === 'valor') pdf.text(c.titulo, c.x + c.w - pad, hy, { align: 'right' });
+      else pdf.text(c.titulo, c.x + pad, hy);
+    });
   };
 
   const drawFooter = (pageNum, totalPages) => {
@@ -8996,15 +9015,44 @@ async function exportFinPDF(tipo) {
     pdf.text(`Página ${pageNum} de ${totalPages} · Gerado pelo Dashboard Grupo RS`, pageW / 2, pageH - 6, { align: 'center' });
   };
 
-  const rowH   = 12;
-  const startY = 56;
+  const lineH  = 3.5;   // altura de cada linha de texto
+  const startY = 52;
+  const maxLinhas = 4;  // limite de quebras por célula, para um registro não ocupar a página toda
   let y        = startY;
   let pageNum  = 1;
 
   drawHeader();
 
+  // quebra o texto na largura da coluna (sem cortar com "…")
+  const quebra = (txt, c, fontStyle) => {
+    pdf.setFont('helvetica', fontStyle); pdf.setFontSize(7.5);
+    let ls = pdf.splitTextToSize(String(txt || ''), c.w - pad * 2);
+    if (ls.length > maxLinhas) {
+      ls = ls.slice(0, maxLinhas);
+      ls[maxLinhas - 1] = ls[maxLinhas - 1].replace(/.{0,2}$/, '') + '…';
+    }
+    return ls;
+  };
+
   ordenados.forEach((r, i) => {
-    if (y + rowH > pageH - 16) {
+    const label  = finSituacaoLabel(r, hoje);
+    const corLbl = label === 'Vencido' ? [220, 38, 38] : label === 'Em aberto' ? corTema : [90, 100, 128];
+
+    const cel = {
+      venc:  [fmtData(r.dtVenc || r.emissao)],
+      doc:   quebra(r.numeroDocumento || '', cols[1], 'bold'),
+      tipo:  quebra(r.tipoDocumento || '', cols[2], 'normal'),
+      forn:  quebra(r.fornecedor || '—', cols[3], 'bold'),
+      cat:   quebra(r.categoria || '', cols[4], 'normal'),
+      obs:   quebra(r.historico || '', cols[5], 'normal'),
+      loja:  quebra(r.loja || '', cols[6], 'normal'),
+      sit:   [label],
+      valor: [fmt(r.valorDoc)]
+    };
+    const nLinhas = Math.max(...Object.values(cel).map(a => a.length));
+    const rowH = nLinhas * lineH + 3;
+
+    if (y + rowH > pageH - 14) {
       drawFooter(pageNum, '?');
       pdf.addPage();
       pageNum++;
@@ -9014,42 +9062,38 @@ async function exportFinPDF(tipo) {
 
     if (i % 2 === 0) {
       pdf.setFillColor(247, 248, 252);
-      pdf.rect(margin, y - 6, usableW, rowH - 2, 'F');
+      pdf.rect(margin, y - 3.5, usableW, rowH, 'F');
     }
 
-    const label   = finSituacaoLabel(r, hoje);
-    const corLbl  = label === 'Vencido' ? [220, 38, 38] : label === 'Em aberto' ? corTema : [90, 100, 128];
-
-    pdf.setFontSize(8); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
-    pdf.text(fmtData(r.dtVenc || r.emissao), margin + 2, y);
-
-    const nome = (r.fornecedor || r.historico || '—');
-    const nomeShort = nome.length > 44 ? nome.substring(0, 43) + '…' : nome;
-    pdf.setFont('helvetica', 'normal');
-    pdf.text(nomeShort, margin + 32, y);
-    if (r.categoria || r.loja) {
-      pdf.setFontSize(7); pdf.setTextColor(107, 117, 148);
-      const linha2 = [r.categoria, r.loja].filter(Boolean).join(' · ');
-      pdf.text(linha2.length > 60 ? linha2.substring(0, 59) + '…' : linha2, margin + 32, y + 4);
-    }
-
-    pdf.setFontSize(7.5); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...corLbl);
-    pdf.text(label, pageW - margin - 40, y, { align: 'right' });
-
-    pdf.setFontSize(8.5); pdf.setTextColor(15, 21, 35);
-    pdf.text(fmt(r.valorDoc), pageW - margin, y, { align: 'right' });
+    const ty = y + 0.5;
+    pdf.setFontSize(7.5);
+    pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
+    pdf.text(cel.venc, cols[0].x + pad, ty);
+    pdf.text(cel.doc,  cols[1].x + pad, ty);
+    pdf.setFont('helvetica', 'normal'); pdf.setTextColor(90, 100, 128);
+    pdf.text(cel.tipo, cols[2].x + pad, ty);
+    pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
+    pdf.text(cel.forn, cols[3].x + pad, ty);
+    pdf.setFont('helvetica', 'normal'); pdf.setTextColor(90, 100, 128);
+    pdf.text(cel.cat,  cols[4].x + pad, ty);
+    pdf.text(cel.obs,  cols[5].x + pad, ty);
+    pdf.text(cel.loja, cols[6].x + pad, ty);
+    pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...corLbl);
+    pdf.text(cel.sit,  cols[7].x + pad, ty);
+    pdf.setTextColor(15, 21, 35);
+    pdf.text(cel.valor, cols[8].x + cols[8].w - pad, ty, { align: 'right' });
 
     y += rowH;
   });
 
   // Total geral
-  if (y + 12 > pageH - 16) { drawFooter(pageNum, '?'); pdf.addPage(); pageNum++; drawHeader(); y = startY; }
+  if (y + 12 > pageH - 14) { drawFooter(pageNum, '?'); pdf.addPage(); pageNum++; drawHeader(); y = startY; }
   y += 2;
   pdf.setDrawColor(228, 233, 242);
   pdf.line(margin, y - 4, pageW - margin, y - 4);
   pdf.setFontSize(10); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(15, 21, 35);
-  pdf.text('Total', margin + 2, y + 2);
-  pdf.text(fmt(totalGeral), pageW - margin, y + 2, { align: 'right' });
+  pdf.text('Total', margin + pad, y + 2);
+  pdf.text(fmt(totalGeral), pageW - margin - pad, y + 2, { align: 'right' });
 
   const totalPages = pdf.internal.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) { pdf.setPage(p); drawFooter(p, totalPages); }
