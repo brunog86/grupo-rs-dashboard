@@ -2572,7 +2572,7 @@ function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisResta
     wrapper.style.cssText = 'margin-bottom:10px;';
 
     row.style.cursor = 'pointer';
-    row.title = 'Clique para ver DAV × NFCe';
+    row.title = 'Clique para ver DAV × F1 × Contingência';
 
     // Breakdown por tipo de venda — dinâmico: mostra qualquer tipo que exista
     // nos dados, não uma lista fixa. Regra de agrupamento: NFCe e NFe são
@@ -2584,7 +2584,9 @@ function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisResta
     breakdown.style.cssText = 'display:none;margin-left:16px;';
 
     const normalizaTipo = (tipo) => (tipo === 'NFCe' || tipo === 'NFe') ? 'F1' : tipo;
-    const CORES_TIPO = { 'F1': '#059669', 'DAV': '#7C3AED' };
+    // Contingência: NFCe emitida mas ainda não autorizada pela SEFAZ — é venda
+    // real e soma no total da loja normalmente; aqui só aparece separada.
+    const CORES_TIPO = { 'F1': '#059669', 'DAV': '#7C3AED', 'Contingência': '#D97706' };
     const corParaTipo = (tipo, idx) => CORES_TIPO[tipo] || ['#DB2777','#D97706','#0891B2','#65A30D'][idx % 4];
 
     let tiposDisponiveis;
@@ -2593,8 +2595,8 @@ function makeLojasRows(byLoja, container, allRows, uteisMes, porTipo, uteisResta
     } else {
       tiposDisponiveis = [...new Set((allRows || []).filter(r => r.loja === l).map(r => normalizaTipo(r.tipo)).filter(Boolean))];
     }
-    // Ordena com DAV e F1 primeiro (mais comuns), depois o resto em ordem alfabética
-    const ordemPreferida = ['DAV', 'F1'];
+    // Ordena com DAV, F1 e Contingência primeiro, depois o resto em ordem alfabética
+    const ordemPreferida = ['DAV', 'F1', 'Contingência'];
     tiposDisponiveis.sort((a, b) => {
       const ia = ordemPreferida.indexOf(a), ib = ordemPreferida.indexOf(b);
       if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
